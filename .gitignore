@@ -1,0 +1,24 @@
+# Downloaded model + weights (not part of this project)
+/CosyVoice/
+/pretrained_models/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.ipynb_checkpoints/
+
+# Generated audio
+*.wav
+*.m4a
+*.aac
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+*.sw[nop]
+*~
+
+# Script output
+/outputs/
