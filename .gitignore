@@ -1,7 +1,3 @@
-# Downloaded model + weights (not part of this project)
-/CosyVoice/
-/pretrained_models/
-
 # Python
 __pycache__/
 *.py[cod]
@@ -12,6 +8,7 @@ __pycache__/
 *.wav
 *.m4a
 *.aac
+/outputs/
 
 # Editors / OS
 .vscode/
@@ -20,5 +17,5 @@ __pycache__/
 *.sw[nop]
 *~
 
-# Script output
-/outputs/
+# Upstream clones (pinned by scripts/setup_parler.sh)
+/third_party/
