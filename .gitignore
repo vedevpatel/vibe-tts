@@ -19,3 +19,6 @@ __pycache__/
 
 # Upstream clones (pinned by scripts/setup_parler.sh)
 /third_party/
+
+# Downloaded model weights
+/pretrained_models
