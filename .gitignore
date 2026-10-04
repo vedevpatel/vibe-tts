@@ -1,14 +1,27 @@
 # Python
+.venv/
 __pycache__/
 *.py[cod]
-.venv/
 .ipynb_checkpoints/
+
+# Machine-specific config (copy .env.example)
+.env
 
 # Generated audio
 *.wav
 *.m4a
 *.aac
-/outputs/
+outputs/*
+!outputs/.gitkeep
+
+# Downloaded model weights (default location; VIBE_TTS_MODEL_DIR may point elsewhere)
+models/*
+!models/.gitkeep
+# Old location, kept ignored for machines that still have the symlink
+/pretrained_models
+
+# Upstream clones (pinned by scripts/config.sh, fetched by scripts/setup.sh)
+/third_party/
 
 # Editors / OS
 .vscode/
@@ -16,9 +29,3 @@ __pycache__/
 .DS_Store
 *.sw[nop]
 *~
-
-# Upstream clones (pinned by scripts/setup_parler.sh)
-/third_party/
-
-# Downloaded model weights
-/pretrained_models

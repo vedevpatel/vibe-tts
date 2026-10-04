@@ -1,0 +1,5 @@
+# macOS arm64 (Apple Silicon). Needs macOS 14+ (torch 2.14.1 ships macosx_14_0_arm64 wheels).
+# PyPI wheels include the MPS backend; no extra index needed.
+# torchaudio 2.11.0 is the newest release and declares no torch pin, so it pairs with torch 2.14.1.
+torch==2.14.1
+torchaudio==2.11.0

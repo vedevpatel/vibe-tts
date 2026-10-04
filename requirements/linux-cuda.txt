@@ -1,0 +1,10 @@
+# Linux x86_64 with an NVIDIA GPU: PyPI's default Linux torch wheel, which is built for
+# CUDA 13.0 and pulls its runtime in as nvidia-*-cu13 wheels (needs NVIDIA driver 580+).
+#
+# Older driver? Use a CUDA 12.6 build instead (resolution checked on Linux x86_64, not run on a GPU)
+# by replacing the two pins below with:
+#   --extra-index-url https://download.pytorch.org/whl/cu126
+#   torch==2.14.1+cu126
+#   torchaudio==2.11.0+cu126
+torch==2.14.1
+torchaudio==2.11.0

@@ -1,16 +1,21 @@
 #!/usr/bin/env bash
-# Run scripts/speak.py on a Colab GPU and fetch the wavs into outputs/colab/.
+# Run scripts/speak.py on a Colab GPU and fetch the wavs into <output dir>/colab/.
+# Colab only: local development never needs this (see scripts/setup.sh and scripts/run.sh).
 #
 # Usage: scripts/remote_speak.sh [--compile] ["sentence" ...]
 # Env:   GPU=L4 (T4, L4, A100, H100, G4)   SESSION=tts-speak
-# Needs the `colab` CLI (uv tool install google-colab-cli) and a working `colab usage`.
+#        SCRIPT=scripts/speak.py  FILES="a.wav b.wav" (outputs to fetch; default speak_0..N-1.wav)
+# Needs the `colab` CLI (uv tool install google-colab-cli) signed in to a Google account with
+# Colab GPU access (check with `colab usage`). No other credentials: the model is public, so no
+# Hugging Face token is needed, and .env is not uploaded (the VM uses default paths).
 # The VM is always stopped on exit, including on errors and Ctrl-C.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+. scripts/config.sh
 
 GPU="${GPU:-L4}"
+SCRIPT="${SCRIPT:-scripts/speak.py}"
 SESSION="${SESSION:-tts-speak}"
-PARLER_REV=d108732cd57788ec86bc857d99a6cabd66663d68   # same pin as scripts/setup_parler.sh
 TMP="$(mktemp -d)"
 REMOTE=/content/vibe-tts
 
@@ -38,8 +43,9 @@ import os
 os.makedirs("$REMOTE/scripts", exist_ok=True)
 EOF
 remote "$TMP/mkdir.py"
-colab upload -s "$SESSION" download_model.py "$REMOTE/download_model.py"
-colab upload -s "$SESSION" scripts/speak.py "$REMOTE/scripts/speak.py"
+colab upload -s "$SESSION" scripts/_common.py "$REMOTE/scripts/_common.py"
+colab upload -s "$SESSION" scripts/download_models.py "$REMOTE/scripts/download_models.py"
+colab upload -s "$SESSION" "$SCRIPT" "$REMOTE/$SCRIPT"
 
 # Install, fetch weights and synthesize in the background; the shell below polls the log.
 ARGS_JSON="$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1:]))' "$@")"
@@ -47,10 +53,10 @@ cat > "$TMP/job.py" <<EOF
 import json, shlex, subprocess
 args = " ".join(shlex.quote(a) for a in json.loads(r'''$ARGS_JSON'''))
 script = f"""cd $REMOTE && export USE_TF=0 USE_FLAX=0 &&
-pip install -q 'git+https://github.com/huggingface/parler-tts.git@$PARLER_REV' 'transformers==4.46.1' soundfile &&
+pip install -q 'git+$PARLER_REPO.git@$PARLER_REV' 'transformers==4.46.1' soundfile &&
 pip install -q -U protobuf &&
-python download_model.py &&
-python scripts/speak.py {args}"""
+python scripts/download_models.py &&
+python $SCRIPT {args}"""
 _ = subprocess.Popen(["nohup", "sh", "-c", script + "; echo EXIT=\$? >> /content/job.log"],
                  stdout=open("/content/job.log", "w"), stderr=subprocess.STDOUT)
 EOF
@@ -65,9 +71,15 @@ EOF
 
 echo "[remote_speak] waiting for job (install + weights + synthesis, a few minutes)"
 SHOWN=0
+FAILS=0
 while true; do
   sleep 20
-  OUT="$(remote "$TMP/poll.py" 2>/dev/null || true)"
+  if ! OUT="$(remote "$TMP/poll.py" 2>/dev/null)"; then
+    FAILS=$((FAILS + 1))
+    [ "$FAILS" -lt 6 ] || { echo "[remote_speak] lost the connection to the VM (6 polls failed in a row)" >&2; exit 1; }
+    continue
+  fi
+  FAILS=0
   TOTAL="$(printf '%s\n' "$OUT" | grep -c . || true)"
   [ "$TOTAL" -gt "$SHOWN" ] && printf '%s\n' "$OUT" | tail -n +"$((SHOWN + 1))"
   SHOWN="$TOTAL"
@@ -75,8 +87,11 @@ while true; do
 done
 echo "$OUT" | grep -q '^EXIT=0' || { echo "[remote_speak] remote job failed; see lines above" >&2; exit 1; }
 
-mkdir -p outputs/colab
-for ((i = 0; i < N; i++)); do
-  colab download -s "$SESSION" "$REMOTE/outputs/speak_$i.wav" "outputs/colab/speak_$i.wav"
+mkdir -p "$OUTPUT_DIR/colab"
+if [ -z "${FILES:-}" ]; then
+  FILES=""; for ((i = 0; i < N; i++)); do FILES="$FILES speak_$i.wav"; done
+fi
+for f in $FILES; do
+  colab download -s "$SESSION" "$REMOTE/outputs/$f" "$OUTPUT_DIR/colab/$f"
 done
-echo "[remote_speak] done: outputs/colab/speak_0..$((N - 1)).wav"
+echo "[remote_speak] done: $FILES -> $OUTPUT_DIR/colab/"

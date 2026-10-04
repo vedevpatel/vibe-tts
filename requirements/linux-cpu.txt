@@ -1,0 +1,6 @@
+# Linux x86_64 without an NVIDIA GPU: the small CPU-only wheels from the PyTorch index.
+# setup.sh passes --index-strategy unsafe-best-match so uv may take the +cpu wheels from this
+# index while everything else (exactly pinned in base.txt) still comes from PyPI.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.14.1+cpu
+torchaudio==2.11.0+cpu

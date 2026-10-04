@@ -1,20 +1,18 @@
-"""Smoke test: load parler-tts-mini-v1 (pinned revision) and write one clip."""
+"""Smoke test: load the local parler-tts-mini-v1 weights (scripts/download_models.py) and write one clip."""
 import time
-from pathlib import Path
 
 import soundfile as sf
-import torch
+from _common import model_dir, output_dir, pick_device  # first: loads .env before transformers reads HF_HOME
 from parler_tts import ParlerTTSForConditionalGeneration
 from transformers import AutoTokenizer
 
-MODEL_ID = "parler-tts/parler-tts-mini-v1"
-MODEL_REVISION = "0392b9451a601e528fd863bbb0598431fee810d9"
-OUTPUT = Path(__file__).resolve().parents[1] / "outputs" / "smoke_test.wav"
+MODEL_DIR = model_dir()
+OUTPUT = output_dir() / "smoke_test.wav"
 
-device = "mps" if torch.backends.mps.is_available() else "cpu"
+device = pick_device()
 
-tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, revision=MODEL_REVISION)
-model = ParlerTTSForConditionalGeneration.from_pretrained(MODEL_ID, revision=MODEL_REVISION).to(device)
+tokenizer = AutoTokenizer.from_pretrained(MODEL_DIR)
+model = ParlerTTSForConditionalGeneration.from_pretrained(MODEL_DIR).to(device)
 
 prompt = "I thought you'd forgotten."
 description = "A female speaker delivers a slightly expressive speech at a moderate pace, in a very clear, close-sounding recording."

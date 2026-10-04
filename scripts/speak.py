@@ -1,7 +1,7 @@
-"""Synthesize sentences with the local parler-tts-mini-v1 weights (pretrained_models/).
+"""Synthesize sentences with the local parler-tts-mini-v1 weights (see scripts/download_models.py).
 
 Usage: .venv/bin/python scripts/speak.py [--compile] ["sentence one" "sentence two" ...]
-Writes outputs/speak_<n>.wav. With no sentences, runs a few built-in test sentences.
+Writes speak_<n>.wav to the output dir (VIBE_TTS_OUTPUT_DIR, default outputs/). With no sentences, runs a few built-in test sentences.
 
 --compile (CUDA only) compiles the forward pass with a static cache. It costs ~30s of
 warm-up per process and pads every input to a fixed length, but runs near real time on
@@ -9,10 +9,10 @@ an L4 once warm. Worth it for many sentences in one run; not for a single one.
 """
 import argparse
 import time
-from pathlib import Path
 
 import soundfile as sf
 import torch
+from _common import model_dir, output_dir, pick_device  # before transformers: loads .env (HF_HOME)
 from parler_tts import ParlerTTSForConditionalGeneration
 from transformers import AutoTokenizer
 from transformers.cache_utils import StaticCache
@@ -21,9 +21,8 @@ from transformers.cache_utils import StaticCache
 if not hasattr(StaticCache, "max_batch_size"):
     StaticCache.max_batch_size = property(lambda self: self.batch_size)
 
-ROOT = Path(__file__).resolve().parents[1]
-MODEL_DIR = ROOT / "pretrained_models" / "parler-tts-mini-v1"
-OUT_DIR = ROOT / "outputs"
+MODEL_DIR = model_dir()
+OUT_DIR = output_dir()
 
 DESCRIPTION = "A female speaker delivers a slightly expressive speech at a moderate pace, in a very clear, close-sounding recording."
 DEFAULT_SENTENCES = [
@@ -38,7 +37,7 @@ parser.add_argument("--compile", action="store_true", help="torch.compile with a
 args = parser.parse_args()
 sentences = args.sentences or DEFAULT_SENTENCES
 
-device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
+device = pick_device()
 compiled = args.compile
 if compiled and device != "cuda":
     print(f"--compile is only supported on CUDA (device={device}); ignoring")

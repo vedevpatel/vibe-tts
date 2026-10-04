@@ -7,10 +7,10 @@ Prints real-time factor (seconds of audio per second of wall time; >1 is faster 
 """
 import sys
 import time
-from pathlib import Path
 
 import soundfile as sf
 import torch
+from _common import model_dir, output_dir, pick_device  # before transformers: loads .env (HF_HOME)
 from parler_tts import ParlerTTSForConditionalGeneration
 from transformers import AutoTokenizer
 from transformers.cache_utils import StaticCache
@@ -19,9 +19,8 @@ from transformers.cache_utils import StaticCache
 if not hasattr(StaticCache, "max_batch_size"):
     StaticCache.max_batch_size = property(lambda self: self.batch_size)
 
-ROOT = Path(__file__).resolve().parents[1]
-MODEL_DIR = ROOT / "pretrained_models" / "parler-tts-mini-v1"
-OUT_DIR = ROOT / "outputs" / "bench"
+MODEL_DIR = model_dir()
+OUT_DIR = output_dir() / "bench"
 
 DESCRIPTION = "A female speaker delivers a slightly expressive speech at a moderate pace, in a very clear, close-sounding recording."
 SENTENCES = [
@@ -33,7 +32,7 @@ SENTENCES = [
 DESC_LEN, PROMPT_LEN = 48, 32
 
 variant = sys.argv[1]
-device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
+device = pick_device()
 dtype = torch.float32 if variant == "fp32" else torch.bfloat16
 compiled = variant.startswith("compile")
 
