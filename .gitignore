@@ -1,5 +1,6 @@
 # Python
 .venv/
+.venv-train/
 __pycache__/
 *.py[cod]
 .ipynb_checkpoints/
@@ -29,3 +30,6 @@ models/*
 .DS_Store
 *.sw[nop]
 *~
+
+# Experiment data (can be a symlink to external storage); raw Expresso is CC BY-NC 4.0
+/data/
