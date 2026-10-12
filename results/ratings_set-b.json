@@ -1,0 +1,508 @@
+{
+  "page_id": "set-b",
+  "rater": "",
+  "exported_at": "2026-10-10T06:12:24.636Z",
+  "ratings": {
+    "c8pgeqkq": {
+      "emotion": "neutral",
+      "notes": "",
+      "naturalness": "2",
+      "intelligibility": "5",
+      "speaker_consistency": "5"
+    },
+    "cwkuhl35": {
+      "emotion": "sad",
+      "notes": "",
+      "naturalness": "5",
+      "intelligibility": "5",
+      "speaker_consistency": "5"
+    },
+    "cgdt5u6t": {
+      "emotion": "neutral",
+      "notes": "",
+      "naturalness": "4",
+      "intelligibility": "5",
+      "speaker_consistency": "3"
+    },
+    "c7m4avwd": {
+      "emotion": "neutral",
+      "notes": "",
+      "naturalness": "2",
+      "intelligibility": "4",
+      "speaker_consistency": "1"
+    },
+    "cqlzgy8b": {
+      "emotion": "other",
+      "notes": "seemed upbeat-ish",
+      "speaker_consistency": "3",
+      "intelligibility": "5",
+      "naturalness": "3"
+    },
+    "csohd2vg": {
+      "emotion": "other",
+      "notes": "disappointed",
+      "speaker_consistency": "5",
+      "intelligibility": "5",
+      "naturalness": "5"
+    },
+    "cs1a5rqb": {
+      "emotion": "other",
+      "notes": "passionate - energetic",
+      "naturalness": "3",
+      "intelligibility": "5",
+      "speaker_consistency": "5"
+    },
+    "c7ere0tl": {
+      "emotion": "unsure",
+      "notes": "",
+      "naturalness": "3",
+      "intelligibility": "5",
+      "speaker_consistency": "1"
+    },
+    "c9hi8vea": {
+      "emotion": "neutral",
+      "notes": "",
+      "naturalness": "3",
+      "intelligibility": "5",
+      "speaker_consistency": "1"
+    },
+    "ccedgxqe": {
+      "emotion": "neutral",
+      "notes": "",
+      "naturalness": "1",
+      "intelligibility": "5",
+      "speaker_consistency": "1"
+    },
+    "cpbr9rg0": {
+      "intelligibility": "2",
+      "notes": "",
+      "emotion": "unsure",
+      "naturalness": "2",
+      "speaker_consistency": "1"
+    },
+    "cf2h7q2r": {
+      "emotion": "neutral",
+      "notes": "",
+      "naturalness": "3",
+      "intelligibility": "4",
+      "speaker_consistency": "1"
+    },
+    "cyk9h5p1": {
+      "intelligibility": "2",
+      "notes": "",
+      "naturalness": "1",
+      "emotion": "neutral"
+    },
+    "creyq5nz": {
+      "intelligibility": "1",
+      "notes": "",
+      "naturalness": "2",
+      "emotion": "unsure",
+      "speaker_consistency": "1"
+    },
+    "cmiuf935": {
+      "emotion": "neutral",
+      "notes": "",
+      "naturalness": "4",
+      "speaker_consistency": "4"
+    },
+    "cz2lp4n5": {
+      "emotion": "neutral",
+      "notes": "",
+      "naturalness": "4",
+      "intelligibility": "5",
+      "speaker_consistency": "5"
+    },
+    "cibwsj6p": {
+      "emotion": "neutral",
+      "notes": "",
+      "naturalness": "1",
+      "intelligibility": "5",
+      "speaker_consistency": "1"
+    },
+    "cchotf2f": {
+      "emotion": "neutral",
+      "notes": "",
+      "naturalness": "2",
+      "intelligibility": "3",
+      "speaker_consistency": "1"
+    },
+    "c3uombn9": {
+      "emotion": "other",
+      "notes": "",
+      "naturalness": "3",
+      "intelligibility": "4",
+      "speaker_consistency": "2"
+    },
+    "ce301dvd": {
+      "emotion": "neutral",
+      "notes": "",
+      "naturalness": "3",
+      "intelligibility": "4",
+      "speaker_consistency": "2"
+    },
+    "cvrway08": {
+      "emotion": "other",
+      "notes": "",
+      "naturalness": "3",
+      "intelligibility": "4",
+      "speaker_consistency": "4"
+    },
+    "cv0safnj": {
+      "emotion": "neutral",
+      "notes": "",
+      "naturalness": "3",
+      "intelligibility": "5",
+      "speaker_consistency": "1"
+    },
+    "ce3zemn7": {
+      "emotion": "neutral",
+      "notes": "",
+      "naturalness": "1",
+      "intelligibility": "5",
+      "speaker_consistency": "1"
+    },
+    "cw47ko8l": {
+      "emotion": "neutral",
+      "notes": "",
+      "naturalness": "4",
+      "intelligibility": "4",
+      "speaker_consistency": "1"
+    },
+    "cdwlazvw": {
+      "emotion": "neutral",
+      "notes": "",
+      "naturalness": "5",
+      "intelligibility": "5",
+      "speaker_consistency": "5"
+    },
+    "ciotc8kw": {
+      "emotion": "other",
+      "notes": "",
+      "naturalness": "5",
+      "intelligibility": "5",
+      "speaker_consistency": "4"
+    },
+    "cxr19jtk": {
+      "emotion": "neutral",
+      "notes": "",
+      "naturalness": "3",
+      "intelligibility": "5",
+      "speaker_consistency": "1"
+    },
+    "cer2w7tj": {
+      "emotion": "sad",
+      "notes": "",
+      "naturalness": "5",
+      "intelligibility": "5",
+      "speaker_consistency": "5"
+    },
+    "cyk4b0d4": {
+      "speaker_consistency": "5",
+      "notes": "",
+      "intelligibility": "5",
+      "naturalness": "4",
+      "emotion": "other"
+    },
+    "cdg3uhf1": {
+      "emotion": "unsure",
+      "notes": "",
+      "naturalness": "3",
+      "intelligibility": "5",
+      "speaker_consistency": "1"
+    },
+    "c7hc81g3": {
+      "emotion": "sad",
+      "notes": "",
+      "naturalness": "4",
+      "intelligibility": "5",
+      "speaker_consistency": "4"
+    },
+    "cc7gt6z5": {
+      "emotion": "other",
+      "notes": "",
+      "naturalness": "5",
+      "intelligibility": "5",
+      "speaker_consistency": "5"
+    },
+    "czg4nt4k": {
+      "emotion": "sad",
+      "notes": "",
+      "naturalness": "3",
+      "intelligibility": "4",
+      "speaker_consistency": "1"
+    },
+    "clvz3sd0": {
+      "emotion": "other",
+      "notes": "",
+      "naturalness": "4",
+      "intelligibility": "5",
+      "speaker_consistency": "5"
+    },
+    "cuk0dnx3": {
+      "emotion": "other",
+      "notes": "",
+      "naturalness": "4",
+      "intelligibility": "5",
+      "speaker_consistency": "2"
+    },
+    "coc5mhbo": {
+      "emotion": "sad",
+      "notes": "",
+      "naturalness": "5",
+      "intelligibility": "5",
+      "speaker_consistency": "5"
+    },
+    "c49hg2nq": {
+      "emotion": "other",
+      "notes": "",
+      "naturalness": "5",
+      "intelligibility": "5",
+      "speaker_consistency": "4"
+    },
+    "cakfwld5": {
+      "emotion": "other",
+      "notes": "",
+      "naturalness": "4",
+      "intelligibility": "5",
+      "speaker_consistency": "5"
+    },
+    "caiw8tms": {
+      "emotion": "neutral",
+      "notes": "",
+      "naturalness": "2",
+      "intelligibility": "5",
+      "speaker_consistency": "1"
+    },
+    "cojrn0sq": {
+      "emotion": "other",
+      "notes": "",
+      "naturalness": "4",
+      "intelligibility": "5",
+      "speaker_consistency": "1"
+    },
+    "c69lp04a": {
+      "emotion": "other",
+      "notes": "",
+      "naturalness": "1",
+      "intelligibility": "5",
+      "speaker_consistency": "4"
+    },
+    "cs9sp3g1": {
+      "emotion": "unsure",
+      "notes": "",
+      "naturalness": "1",
+      "intelligibility": "3",
+      "speaker_consistency": "1"
+    },
+    "c8twrwf6": {
+      "emotion": "sad",
+      "notes": "",
+      "naturalness": "4",
+      "intelligibility": "5",
+      "speaker_consistency": "2"
+    },
+    "cfhhazbz": {
+      "emotion": "other",
+      "notes": "",
+      "naturalness": "4",
+      "intelligibility": "5",
+      "speaker_consistency": "5"
+    },
+    "cx8rkb3o": {
+      "emotion": "other",
+      "notes": "",
+      "naturalness": "2",
+      "intelligibility": "5",
+      "speaker_consistency": "2"
+    },
+    "c7fbuiyo": {
+      "emotion": "other",
+      "notes": "",
+      "naturalness": "4",
+      "intelligibility": "5",
+      "speaker_consistency": "1"
+    },
+    "chemvmq2": {
+      "emotion": "other",
+      "notes": "",
+      "naturalness": "4",
+      "intelligibility": "5",
+      "speaker_consistency": "2"
+    },
+    "c0oq9p19": {
+      "naturalness": "4",
+      "notes": "",
+      "intelligibility": "5",
+      "speaker_consistency": "2"
+    },
+    "c42x87go": {
+      "emotion": "other",
+      "notes": "",
+      "naturalness": "4",
+      "intelligibility": "5",
+      "speaker_consistency": "4"
+    },
+    "cmk5sq3y": {
+      "emotion": "unsure",
+      "notes": "",
+      "naturalness": "3",
+      "intelligibility": "5",
+      "speaker_consistency": "1"
+    },
+    "cyjn27u0": {
+      "emotion": "neutral",
+      "notes": "",
+      "naturalness": "2",
+      "intelligibility": "5",
+      "speaker_consistency": "2"
+    },
+    "cq0d0wge": {
+      "emotion": "other",
+      "notes": "",
+      "naturalness": "1",
+      "intelligibility": "5",
+      "speaker_consistency": "1"
+    },
+    "cs4cbtcx": {
+      "emotion": "other",
+      "notes": "",
+      "naturalness": "1",
+      "intelligibility": "4",
+      "speaker_consistency": "3"
+    },
+    "c0yplo35": {
+      "emotion": "other",
+      "notes": "",
+      "naturalness": "2",
+      "intelligibility": "5",
+      "speaker_consistency": "3"
+    },
+    "co1k99km": {
+      "emotion": "sad",
+      "notes": "",
+      "naturalness": "3",
+      "intelligibility": "5",
+      "speaker_consistency": "5"
+    },
+    "ch0kmhf5": {
+      "naturalness": "1",
+      "notes": "",
+      "intelligibility": "5",
+      "emotion": "other",
+      "speaker_consistency": "4"
+    },
+    "czigu3et": {
+      "emotion": "unsure",
+      "notes": "",
+      "naturalness": "3",
+      "intelligibility": "5",
+      "speaker_consistency": "1"
+    },
+    "cjd3b6us": {
+      "emotion": "other",
+      "notes": "",
+      "naturalness": "3",
+      "intelligibility": "5",
+      "speaker_consistency": "1"
+    },
+    "cw44y4ws": {
+      "emotion": "sad",
+      "notes": "",
+      "naturalness": "5",
+      "intelligibility": "5",
+      "speaker_consistency": "4"
+    },
+    "cb6i8xg1": {
+      "emotion": "other",
+      "notes": "",
+      "naturalness": "5",
+      "intelligibility": "5",
+      "speaker_consistency": "5"
+    },
+    "c5ay0qrv": {
+      "emotion": "unsure",
+      "notes": "",
+      "naturalness": "3",
+      "intelligibility": "5",
+      "speaker_consistency": "1"
+    },
+    "cdf37ylf": {
+      "emotion": "neutral",
+      "notes": "",
+      "naturalness": "4",
+      "intelligibility": "5",
+      "speaker_consistency": "1"
+    },
+    "cfq0xmop": {
+      "emotion": "unsure",
+      "notes": "",
+      "naturalness": "2",
+      "intelligibility": "5",
+      "speaker_consistency": "4"
+    },
+    "cbs8b3ka": {
+      "emotion": "other",
+      "notes": "",
+      "naturalness": "2",
+      "intelligibility": "5",
+      "speaker_consistency": "5"
+    },
+    "ce50s95l": {
+      "emotion": "unsure",
+      "notes": "",
+      "naturalness": "1",
+      "intelligibility": "5",
+      "speaker_consistency": "4"
+    },
+    "cr5w066l": {
+      "emotion": "unsure",
+      "notes": "",
+      "naturalness": "2",
+      "intelligibility": "5",
+      "speaker_consistency": "4"
+    },
+    "cxyumv8e": {
+      "emotion": "neutral",
+      "notes": "",
+      "naturalness": "2",
+      "intelligibility": "5",
+      "speaker_consistency": "1"
+    },
+    "croj0q19": {
+      "emotion": "other",
+      "notes": "",
+      "naturalness": "3",
+      "intelligibility": "5",
+      "speaker_consistency": "4"
+    },
+    "cbwtp001": {
+      "emotion": "other",
+      "notes": "",
+      "naturalness": "5",
+      "intelligibility": "5",
+      "speaker_consistency": "4"
+    },
+    "chngdq7q": {
+      "intelligibility": "3",
+      "notes": "",
+      "speaker_consistency": "1",
+      "naturalness": "3",
+      "emotion": "other"
+    },
+    "cy3fcrdi": {
+      "emotion": "neutral",
+      "notes": "",
+      "naturalness": "3",
+      "intelligibility": "5",
+      "speaker_consistency": "1"
+    },
+    "ctd3vnni": {
+      "emotion": "other",
+      "notes": "",
+      "naturalness": "2",
+      "intelligibility": "5",
+      "speaker_consistency": "3"
+    }
+  }
+}
