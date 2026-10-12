@@ -22,7 +22,7 @@ Nothing here rates audio automatically. No claim about emotion, naturalness or s
 made without listener ratings.
 
 Limitation to keep in mind: the unchanged base model has never heard this Expresso speaker. Its
-"ex01" voice is whatever the name token happens to evoke, and it differs from clip to clip. The
+"ex02" voice is whatever the name token happens to evoke, and it differs from clip to clip. The
 baseline therefore cannot show speaker consistency with the target speaker, and ordinary adaptation
 does not preserve any other speaker's identity either.
 """
@@ -227,7 +227,7 @@ const PAGE_ID="__PAGE_ID__", TRIALS=__TRIALS__;
 const KEY="listening-"+PAGE_ID; let R={};
 try{R=JSON.parse(localStorage.getItem(KEY)||"{}")}catch(e){}
 const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(R))}catch(e){}};
-const EM=[["neutral","Neutral"],["sad","Sad"],["other","Some other emotion / mixed"],["unsure","Cannot tell"]];
+const EM=[["not_sad","Not sad (neutral, calm or upbeat)"],["sad","Sad"],["other","Some other emotion / mixed"],["unsure","Cannot tell"]];
 const Q=[["naturalness","Naturalness","1 = clearly artificial, 5 = indistinguishable from a real person"],
  ["intelligibility","Intelligibility","1 = I could not make out the words, 5 = every word is clear"],
  ["speaker_consistency","Same speaker as the reference voice?","1 = clearly a different person, 5 = clearly the same person"]];
@@ -236,7 +236,7 @@ function render(){
  const box=document.getElementById("trials");
  TRIALS.forEach((t,i)=>{const r=R[t.label]||{};const c=document.createElement("div");c.className="card";c.id="c_"+t.label;
   c.innerHTML=`<b>Clip ${i+1} of ${TRIALS.length}</b><br><audio controls preload="none" src="${t.src}"></audio>
-  <fieldset><legend>Which emotion does this clip express?</legend>${EM.map(([v,l])=>`<label><input type=radio name="${t.label}_emotion" value="${v}" ${r.emotion==v?"checked":""}> ${l}</label>`).join("")}</fieldset>
+  <fieldset><legend>Does this clip sound sad?</legend>${EM.map(([v,l])=>`<label><input type=radio name="${t.label}_emotion" value="${v}" ${r.emotion==v?"checked":""}> ${l}</label>`).join("")}</fieldset>
   ${Q.map(([k,l,h])=>`<fieldset class=scale><legend>${l} <span class=mut>${h}</span></legend>${scale(t.label,k,r[k])}</fieldset>`).join("")}
   <fieldset><legend>Notes <span class=mut>(optional)</span></legend><textarea rows=1 name="${t.label}_notes">${(r.notes||"").replace(/</g,"&lt;")}</textarea></fieldset>`;
   c.addEventListener("change",()=>{const x=R[t.label]=R[t.label]||{};
@@ -337,33 +337,60 @@ def cmd_page(cfg, args):
 
 
 # ---------------------------------------------------------------- score
+# Page answers. Older pages offered "neutral" where current ones offer "not_sad"; both mean "not sad".
+# This speaker's real default recordings were heard as lively rather than neutral (set-b: all 8 rated "other"),
+# so the primary measure is sad vs not sad, and "other" counts as not sad.
+NOT_SAD = {"not_sad", "neutral", "other"}
+
+
 def cmd_score(cfg, args):
     key = read_json(args.key)["labels"]
     rows = defaultdict(list)
-    n_files = 0
+    n_files = n_incomplete = 0
     for rf in args.ratings:
         data = read_json(rf)
         n_files += 1
         for lab, x in data["ratings"].items():
-            if lab not in key or not all(k in x for k in ("emotion", "naturalness", "intelligibility", "speaker_consistency")):
+            if lab not in key:
+                continue
+            if not all(x.get(k) for k in ("emotion", "naturalness", "intelligibility", "speaker_consistency")):
+                n_incomplete += 1
                 continue
             k = key[lab]
-            rows[(k["run"], k["style"])].append((k["style"], x))
+            rows[(k["run"], k["style"])].append(x)
     if not rows:
         raise SystemExit("no complete ratings matched the answer key")
 
     def mean(v):
         return sum(v) / len(v)
 
-    out = [f"Ratings from {n_files} file(s). Emotion accuracy = rater's choice equals the intended style.\n",
-           "| run | intended style | n | emotion correct | naturalness | intelligibility | speaker consistency |",
-           "|---|---|---|---|---|---|---|"]
+    def share(xs, answers):
+        return mean([1.0 if x["emotion"] in answers else 0.0 for x in xs])
+
+    out = [f"Ratings from {n_files} file(s); {n_incomplete} incomplete rating(s) skipped.",
+           "Heard as sad / not sad / cannot tell = share of clips given that answer; 'not sad' includes 'some other emotion'.\n",
+           "| run | intended style | n | heard as sad | heard as not sad | cannot tell | naturalness | intelligibility | speaker consistency |",
+           "|---|---|---|---|---|---|---|---|---|"]
     for (run, style) in sorted(rows):
         xs = rows[(run, style)]
-        heard = "neutral" if style == "default" else style  # the page's option for the default style is "neutral"
-        acc = mean([1.0 if x["emotion"] == heard else 0.0 for _, x in xs])
-        out.append(f"| {run} | {style} | {len(xs)} | {acc:.0%} | {mean([int(x['naturalness']) for _, x in xs]):.2f} | "
-                   f"{mean([int(x['intelligibility']) for _, x in xs]):.2f} | {mean([int(x['speaker_consistency']) for _, x in xs]):.2f} |")
+        out.append(f"| {run} | {style} | {len(xs)} | {share(xs, {'sad'}):.0%} | {share(xs, NOT_SAD):.0%} | {share(xs, {'unsure'}):.0%} | "
+                   f"{mean([int(x['naturalness']) for x in xs]):.2f} | {mean([int(x['intelligibility']) for x in xs]):.2f} | "
+                   f"{mean([int(x['speaker_consistency']) for x in xs]):.2f} |")
+
+    out += ["\nSeparation = heard as sad for sad clips minus heard as sad for default clips (percentage points; "
+            "0 means the two styles were not told apart):\n", "| run | separation |", "|---|---|"]
+    for run in sorted({r for r, _ in rows}):
+        if (run, "sad") in rows and (run, "default") in rows:
+            sep = share(rows[(run, "sad")], {"sad"}) - share(rows[(run, "default")], {"sad"})
+            out.append(f"| {run} | {sep * 100:+.0f} |")
+
+    answers = sorted({x["emotion"] for xs in rows.values() for x in xs})
+    out += ["\nAll answers (counts):\n", "| run | intended style | " + " | ".join(answers) + " |",
+            "|---|---|" + "---|" * len(answers)]
+    for (run, style) in sorted(rows):
+        xs = rows[(run, style)]
+        out.append(f"| {run} | {style} | " + " | ".join(str(sum(x["emotion"] == a for x in xs)) for a in answers) + " |")
+
     out.append("\nLikert scales are 1-5 (higher is better). Means over clips and raters; with few clips treat differences as indicative only.")
     out.append("Baseline caveat: the unchanged model has never heard this Expresso speaker, so its 'speaker consistency' "
                "against the reference voice measures how close a generic voice happens to be, not preserved identity. "
