@@ -67,10 +67,20 @@ exclude_substyles = ["emphasis", "essentials"]
 
 [description]
 # Same structure for every style; only the style phrase changes. {speaker} is the Expresso id.
-template = "Expresso speaker {speaker} speaks in a {style_phrase} delivery. The recording is clear with little background noise."
+# Training (train_emotion.py) and generation (evaluate_emotion.py generate) build descriptions from here; the
+# "description" field in the prepared manifests and splits is the emotion-v1 text and is not used for either.
+#
+# emotion-v2 descriptions. They use the attribute words Parler-TTS Mini was trained on (expressive and animated /
+# monotone, speed, pitch), because the unchanged model did not respond to "sad" at all (set-b). Each claim holds
+# for ex02's recordings, sad relative to default (processed/description_checks.json): F0 range 6.1 vs 11.3
+# semitones, F0 median 223 vs 248 Hz, pace 16.4 vs 19.6 characters per active second; a listener heard the real
+# default recordings as lively, not neutral (set-b).
+# emotion-v1 used: template "Expresso speaker {speaker} speaks in a {style_phrase} delivery. The recording is clear
+# with little background noise." with default = "neutral" and sad = "sad, subdued".
+template = "Expresso speaker {speaker} {style_phrase}. The recording is clear with little background noise."
 [description.style_phrase]
-default = "neutral"             # "conversational" dropped: these are read-aloud sentences, nothing measurable supports it
-sad = "sad, subdued"
+default = "delivers an expressive and animated speech with a moderate speed and pitch"
+sad = "delivers a sad, monotone speech, speaking slowly with a low pitch"
 
 [description.checks]
 # prepare_expresso.py tests the measurable claims in the descriptions against the accepted recordings
