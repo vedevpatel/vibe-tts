@@ -45,3 +45,11 @@ Optional and independent of the local setup. Needs the `colab` CLI; see
 See [SETUP.md](SETUP.md) for how the environment is pinned, platform notes, configuration,
 model provenance, and how to bump dependencies. Upstream code lives in `third_party/`
 (gitignored, unmodified); our code is in `scripts/`.
+
+## Expresso emotion fine-tuning (experimental, noncommercial)
+
+A one-speaker fine-tune of Parler-TTS on Expresso's default and sad read speech, with a blinded
+before/after listening test. Separate from everyday use above; nothing here changes `run.sh` or
+`run_colab.sh`. The dataset is CC BY-NC 4.0, so any checkpoint trained on it is noncommercial.
+See [EXPRESSO.md](EXPRESSO.md) for the workflow, provenance and results.
+
