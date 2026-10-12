@@ -1,0 +1,158 @@
+# Expresso emotion fine-tuning experiment: one speaker, default + sad read speech.
+# Every script in the experiment reads this file (scripts/expresso_common.py), so a value lives in
+# exactly one place. Relative paths are relative to the repo root, never to the shell's cwd.
+#
+# Dataset license: CC BY-NC 4.0 (noncommercial). Anything derived from it, including checkpoints
+# trained on it, inherits that restriction. See EXPRESSO.md.
+
+[paths]
+# Everything bulky lives under data_root. Environment override: VIBE_TTS_DATA_DIR (absolute path).
+# On a small internal disk, make data/expresso a symlink to external storage (the same trick the
+# repo used for pretrained_models/); the scripts then work unchanged.
+data_root = "data/expresso"
+raw = "raw"                      # official archive + the extracted read-speech subset (never edited)
+inventory = "inventory"          # inventory.json / .md, speaker selection, acoustic checks
+processed = "processed"          # resampled training audio + manifest
+splits = "splits"                # frozen train/validation/test manifests
+listening_pack = "listening_pack"  # a few ORIGINAL default/sad recordings for the human ear
+runs = "runs"                    # training runs: prepared data, checkpoints, logs
+# Evaluation audio goes to <output dir>/expresso (VIBE_TTS_OUTPUT_DIR, default outputs/).
+eval_subdir = "expresso"
+
+[source]
+# Official release: https://github.com/facebookresearch/textlesslib/tree/main/examples/expresso/dataset
+# (README of that directory quotes this URL, size and md5; the archive's headers were checked too.)
+url = "https://dl.fbaipublicfiles.com/textless_nlp/expresso/data/expresso.tar"
+size_bytes = 38441031680         # Content-Length reported by the server, 2026-10-07
+md5 = "6bf580a4cd4392ae2473626147b5307c"   # published in the official README
+project_page = "https://speechbot.github.io/expresso/"
+readme_url = "https://github.com/facebookresearch/textlesslib/tree/main/examples/expresso/dataset"
+license = "CC BY-NC 4.0"
+license_url = "https://creativecommons.org/licenses/by-nc/4.0/"
+attribution = "Nguyen et al., EXPRESSO: A Benchmark and Analysis of Discrete Expressive Speech Resynthesis, INTERSPEECH 2023 (https://arxiv.org/abs/2308.05725). Dataset by Meta AI (Facebook Research), distributed under CC BY-NC 4.0."
+keep_archive = true              # keep expresso.tar after extraction so a re-run never re-downloads
+# Members extracted from the archive (fnmatch patterns on the tar member name). Conversational
+# audio (~30 GB of improvised dialogue) is deliberately not extracted: this experiment is read speech.
+extract = [
+  "expresso/README.txt",
+  "expresso/LICENSE.txt",
+  "expresso/read_transcriptions.txt",
+  "expresso/VAD_segments.txt",
+  "expresso/splits/*",
+  "expresso/audio_48khz/read/*",
+]
+
+[speaker]
+# Pinned from the real inventory (data/expresso/inventory/inventory.md). The rule, applied identically to all four speakers
+# (scripts/inventory_expresso.py): (1) >= min_usable_clips_per_style usable clips in every target style; (2) every measured
+# claim in the descriptions must hold for that speaker's recordings; (3) of the rest, the most usable audio in the scarcer style.
+#   ex02  eligible, scarcer style (default) 17:29, sad 20:42, noise floor p95 -57.5 / -56.6 dBFS   <- rule's pick
+#   ex04  eligible, 16:54 / 18:58      ex03  eligible, 15:46 / 21:36 (cleanest median but p95 about -48 dBFS)
+#   ex01  REJECTED: its sad is not lower or slower than its default (F0 median 165 vs 154 Hz, pace 18.3 vs 17.7 chars/s), so
+#         "sad, subdued" is not supported for this speaker, although ex01 has the most default audio (19:01).
+# Set "auto" to let the rule choose again; the data differences between speakers are small, so ex03/ex04 are reasonable alternatives.
+id = "ex02"
+# A speaker is a candidate only if EVERY target style has at least this many usable clips.
+min_usable_clips_per_style = 100
+styles = ["default", "sad"]      # original Expresso style names (directory names under read/)
+# Read-speech corpora to use. "base" = short sentences; "longform" = long recordings (excluded:
+# no sentence-level transcripts, far above the 30 s training limit).
+corpora = ["base"]
+# Filename sub-styles to drop. Both are default-style sub-corpora and both are excluded on inventory evidence:
+#   emphasis   200 clips per speaker: each sentence read several times with a different word stressed (*word* in the
+#              transcript). That is stressed, not neutral, delivery, and it repeats text.
+#   essentials 40 clips per speaker of short greetings and exclamations ("Hello!", "Hi!", "Hey."), 16-20 of them under 1 s.
+# What remains of "default" is the plain read corpus (default_NNNNN), the like-for-like counterpart of sad_NNNNN.
+exclude_substyles = ["emphasis", "essentials"]
+
+[description]
+# Same structure for every style; only the style phrase changes. {speaker} is the Expresso id.
+template = "Expresso speaker {speaker} speaks in a {style_phrase} delivery. The recording is clear with little background noise."
+[description.style_phrase]
+default = "neutral"             # "conversational" dropped: these are read-aloud sentences, nothing measurable supports it
+sad = "sad, subdued"
+
+[description.checks]
+# prepare_expresso.py tests the measurable claims in the descriptions against the accepted recordings
+# and writes the evidence to processed/description_checks.json. Thresholds for "clear, little noise":
+noise_floor_median_max_dbfs = -55.0   # median over clips of the 10th-percentile 20 ms frame level
+noise_floor_p95_max_dbfs = -45.0      # 95% of clips must have a floor at or below this
+# "subdued" (sad vs default): sad must be lower in at least this many of 5 indicators
+# (speech level, F0 median, F0 range, speaking pace, share of time speaking).
+subdued_min_indicators = 3
+
+[prepare]
+seed = 1234
+# Quality gates. Clips failing any gate are excluded and logged with the reason.
+min_duration_s = 1.0             # below this the audio-code sequence is too short to learn from
+max_duration_s = 30.0            # Parler's training limit (max_duration_in_seconds)
+max_clipping_fraction = 0.001    # fraction of samples at/above 0.999 of full scale
+min_peak = 0.001                 # below this the clip is effectively silent
+max_text_chars = 400             # description/prompt filter used by the upstream recipe
+# NO denoising, NO silence trimming, NO loudness normalization: pauses and quiet speech are
+# part of the delivery being learned. Resampling only (48 kHz -> model rate), soxr "VHQ".
+resample_quality = "VHQ"
+output_subtype = "PCM_24"             # keep the source resolution (no 24 -> 16 bit quantization)
+
+[split]
+seed = 1234
+train = 0.8
+validation = 0.1
+test = 0.1
+# Transcripts are grouped by normalized text before splitting, so the same words in a different
+# style (or a repeated recording) never cross splits.
+
+[eval]
+seed = 20260607
+n_test_transcripts = 8           # fixed, seeded selection from the frozen test split
+seeds = [11, 22]                 # generation seeds per (text, style); identical before/after training
+# Emotionally ambiguous sentences, absent from the dataset (checked at run time against every
+# transcript in the release). Both styles speak each one.
+new_sentences = [
+  "I did not expect to see you here today.",
+  "The package arrived on Tuesday afternoon.",
+  "She closed the door and walked down the hall.",
+  "Well, that is one way to look at it.",
+  "We will find out what happened soon enough.",
+  "He read the letter twice and put it away.",
+]
+[eval.generation]
+# Same for baseline and fine-tuned runs. These mirror speak.py / the model's generation_config
+# (do_sample=true) so the baseline is what the working inference path produces.
+do_sample = true
+temperature = 1.0
+max_length = 2580                # the checkpoint's generation_config value (30 s of audio tokens)
+min_new_tokens = 10              # ditto; passed explicitly so a fine-tuned checkpoint's own generation_config cannot differ
+dtype = "float32"                # float32 on CPU/MPS/CUDA; bfloat16 is not used so numerics stay comparable
+save_subtype = "FLOAT"           # raw model output saved as 32-bit float WAV: no clipping, no quantization
+
+[training]
+# Thin wrapper around third_party/parler-tts/training/run_parler_tts_training.py (pinned in
+# scripts/config.sh). Values follow the official single-speaker notebook except where the much
+# smaller dataset forces a change; every deviation is explained in EXPRESSO.md.
+base_model = "parler-tts-mini-v1"    # directory name under VIBE_TTS_MODEL_DIR
+seed = 456
+dtype = "bfloat16"               # "float16" is what the T4 notebook used; bf16 on L4/A100
+attn_implementation = "sdpa"
+freeze_text_encoder = true
+learning_rate = 1.0e-4
+adam_beta1 = 0.9
+adam_beta2 = 0.99
+weight_decay = 0.01
+lr_scheduler_type = "constant_with_warmup"
+warmup_steps = 20
+per_device_train_batch_size = 4
+gradient_accumulation_steps = 4      # effective batch 16 (the notebook uses 36 on ~10x the data)
+gradient_checkpointing = true
+num_train_epochs = 10               # 600 train clips / 16 = 37 steps per epoch, 370 steps; validation loss picks the epoch
+eval_every_epochs = 1            # validation loss is computed this often; checkpoints are saved at the same steps
+save_total_limit = 12              # >= number of epochs, so no checkpoint is rotated away before selection
+max_duration_in_seconds = 30
+min_duration_in_seconds = 1.0
+max_text_length = 400
+audio_encoder_per_device_batch_size = 8
+per_device_eval_batch_size = 4
+preprocessing_num_workers = 1     # datasets 3.6 multiprocessing map hangs on Python 3.13 (Colab); the data is tiny, so one process is fine
+dataloader_num_workers = 2
+predict_with_generate = false    # WER/CLAP during training need extra model downloads; evaluate_emotion.py covers generation
+report_to = "tensorboard"
