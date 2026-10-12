@@ -29,6 +29,11 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# Generated audio is labelled per training run, so a new run never overwrites an earlier one's
+# (emotion-v1 keeps its original labels, which the listening pages and answer keys refer to).
+if [ "$RUN" = emotion-v1 ]; then BASE_LABEL=baseline; FT_LABEL=finetuned; else BASE_LABEL="baseline-$RUN"; FT_LABEL="finetuned-$RUN"; fi
+if [ "$SMOKE" = 1 ]; then BASE_LABEL="$BASE_LABEL-smoke"; FT_LABEL="$FT_LABEL-smoke"; fi  # 2-clip runs never replace full ones
+
 GPU="${GPU:-L4}"
 SESSION="${SESSION:-tts-train-expresso}"
 REMOTE=/content/vibe-tts
@@ -159,12 +164,12 @@ echo "[job] model weights"
 python scripts/download_models.py
 python -c "import torch,transformers,accelerate,datasets;print('[job] versions torch',torch.__version__,'transformers',transformers.__version__,'accelerate',accelerate.__version__,'datasets',datasets.__version__,'gpu',torch.cuda.get_device_name(0))"
 echo "[job] baseline generation (unchanged model)"
-python scripts/evaluate_emotion.py generate --label baseline $GEN_FLAGS
+python scripts/evaluate_emotion.py generate --label $BASE_LABEL $GEN_FLAGS
 echo "[job] training"
 python scripts/train_emotion.py train --run $RUN $TRAIN_FLAGS
 if [ "$SMOKE" = 0 ]; then
   echo "[job] fine-tuned generation (same eval set, descriptions, seeds, settings, GPU)"
-  python scripts/evaluate_emotion.py generate --label finetuned --model data/expresso/runs/$RUN/export $GEN_FLAGS
+  python scripts/evaluate_emotion.py generate --label $FT_LABEL --model data/expresso/runs/$RUN/export $GEN_FLAGS
   echo "[job] packing the checkpoint"
   tar -C data/expresso/runs/$RUN -cf /content/export.tar export
   split -a 3 -b $DOWN_CHUNK -d /content/export.tar /content/export.tar.part-
@@ -241,6 +246,7 @@ EOF
 
 mkdir -p "$OUTPUT_DIR/colab_train"
 fetch_chunked /content/results.tgz "$OUTPUT_DIR/colab_train/results.tgz"
+rm -rf "$OUTPUT_DIR/colab_train/outputs" "$OUTPUT_DIR/colab_train/data"   # an earlier run's results must not be copied again below
 tar -xzf "$OUTPUT_DIR/colab_train/results.tgz" -C "$OUTPUT_DIR/colab_train"
 # Put each generated run where evaluate_emotion.py (page, measure, score) looks for it: <output dir>/expresso/runs/<label>
 mkdir -p "$OUTPUT_DIR/expresso/runs"
