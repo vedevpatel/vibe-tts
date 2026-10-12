@@ -77,6 +77,28 @@ shell win over `.env`.
 Moving an existing `pretrained_models/` directory over is just
 `VIBE_TTS_MODEL_DIR=<that directory>`: the layout inside is unchanged.
 
+## Training environment (Expresso fine-tune)
+Separate from `.venv`, which is never modified by it. `scripts/setup_train.sh` builds `.venv-train` from
+`requirements/base.txt` **without its `fsspec` line**, the platform torch file, and `requirements/train.txt`.
+
+Why separate: `datasets` 3.6.0 needs `fsspec<=2025.3.0` while `base.txt` pins `fsspec==2026.9.0`, a pin the
+inference setup was verified with. `datasets` stays below 4.0 because 4.x decodes audio via torchcodec and no
+longer returns the `{"array": ...}` dict that the pinned upstream training script indexes.
+
+| Package | Inference `.venv` | Training `.venv-train` / Colab |
+|---|---|---|
+| transformers | 4.46.1 | 4.46.1 (unchanged; `USE_TF=0` is set by every script that needs it) |
+| torch / torchaudio | 2.14.1 / 2.11.0 | 2.14.1 / 2.11.0 locally; Colab uses its own torch |
+| huggingface-hub, numpy, protobuf | 0.36.2, 2.4.6, 4.25.9 | same |
+| fsspec | 2026.9.0 | 2025.3.0 |
+| accelerate, datasets, evaluate, jiwer, wandb | not installed | 1.15.0, 3.6.0, 0.4.6, 4.0.0, 0.28.0 |
+| parler-tts | `d108732cd577` (editable, `--no-deps`) | same checkout |
+| model | `parler-tts-mini-v1` @ `0392b9451a60` | same (`REVISION.json` records it) |
+
+`wandb` is only installed because the upstream `training/utils.py` imports it unconditionally; runs use
+tensorboard with `WANDB_MODE=disabled` and `HF_HUB_DISABLE_TELEMETRY=1`. A real fine-tune needs a CUDA GPU
+(`scripts/run_colab_train.sh`); the Mac environment is for data preparation and pipeline smoke tests.
+
 ## Colab
 `scripts/run_colab.sh` (wraps `scripts/remote_speak.sh`) is entirely separate from the local setup
 and nothing local depends on it. It uses Colab's preinstalled torch and installs the pinned
