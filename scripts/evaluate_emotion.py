@@ -5,15 +5,18 @@ Subcommands (all read configs/expresso_emotion.toml; run from any directory):
   select    Freeze the evaluation set: N seeded test-split transcripts (both styles exist) plus the
             configured new sentences (checked to be absent from the whole release). Writes
             <splits>/eval_set.json. Run once; generate refuses to run without it.
-  generate  Synthesize every (text, style, seed) with one model. The SAME eval set, descriptions,
-            seeds, generation settings and waveform handling are used for every model:
+  generate  Synthesize every (text, style, seed) with one model. The SAME eval set, seeds, generation
+            settings and waveform handling are used for every model, and the descriptions in the config
+            (the ones the model was trained with):
               evaluate_emotion.py generate --label baseline
               evaluate_emotion.py generate --label finetuned --model <checkpoint dir>
             Raw 32-bit float WAVs and metadata.jsonl go to <output dir>/expresso/runs/<label>/.
   page      Build a blinded listening page (opaque shuffled clip labels) from generated runs, plus the
             real held-out recordings as hidden controls. The answer key is written NEXT TO the page
             directory, never inside it.
-  score     Aggregate the ratings a listener exported from the page, using the answer key.
+  pairs     Build a short forced-choice page instead: the same sentence in both styles, "which one sounds sadder?".
+            A few seconds per pair, so a model can be checked by ear in minutes.
+  score     Aggregate the ratings a listener exported from either page, using its answer key.
   measure   Descriptive acoustics (duration, pace, level, pitch, clipping) per run and style, next to the real
             held-out recordings. Measurements, not ratings: they show whether a model's two styles differ in the
             same measurable ways as the real ones, which says nothing about how they sound.
@@ -151,7 +154,17 @@ def cmd_generate(cfg, args):
     gen_kwargs = {"do_sample": gen["do_sample"], "temperature": gen["temperature"],
                   "max_length": gen["max_length"], "min_new_tokens": gen["min_new_tokens"]}
 
-    done = {r["clip_id"] for r in load_jsonl(meta_path)} if meta_path.is_file() else set()
+    # Descriptions come from the config, so a model trained with new descriptions is evaluated with them. The
+    # eval set keeps the ones it was frozen with (emotion-v1); a run never mixes two sets of descriptions.
+    descriptions = {s: description_for(cfg, es["speaker"], s) for s in es["styles"]}
+    changed = [s for s in es["styles"] if descriptions[s] != es["descriptions"][s]]
+    if changed:
+        log(f"descriptions for {changed} differ from those frozen in the eval set; using the config's")
+    previous = load_jsonl(meta_path) if meta_path.is_file() else []
+    mixed = {r["description"] for r in previous} - set(descriptions.values())
+    if mixed:
+        raise SystemExit(f"run '{args.label}' already has clips generated with other descriptions ({sorted(mixed)}); use a new --label")
+    done = {r["clip_id"] for r in previous}
     todo = [(it, s, seed) for it in es["items"] for s in es["styles"] for seed in es["seeds"]]
     if args.limit:
         todo = todo[: args.limit]
@@ -161,7 +174,7 @@ def cmd_generate(cfg, args):
             clip_id = f"{it['item_id']}_{style}_s{seed}"
             if clip_id in done and (out / "raw" / f"{clip_id}.wav").is_file():
                 continue
-            desc = es["descriptions"][style]
+            desc = descriptions[style]
             d_in = tokenizer(desc, return_tensors="pt").to(device)
             p_in = tokenizer(it["text"], return_tensors="pt").to(device)
             torch.manual_seed(seed)
@@ -336,6 +349,116 @@ def cmd_page(cfg, args):
     log(f"answer key (do not open before rating): {key_path}")
 
 
+# ---------------------------------------------------------------- pairs
+PAIRS_PAGE = r"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Which is sadder __PAGE_ID__</title>
+<style>
+:root{color-scheme:light dark;--bg:#fafaf8;--fg:#1d1d1b;--mut:#666;--card:#fff;--line:#d9d9d4;--acc:#2a5db0;--ok:#2e7d4f}
+@media(prefers-color-scheme:dark){:root{--bg:#161616;--fg:#e8e8e4;--mut:#9a9a94;--card:#202020;--line:#383836;--acc:#7aa7ec;--ok:#6cc08b}}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,sans-serif}
+main{max-width:46rem;margin:0 auto;padding:1rem 1rem 6rem}.mut{color:var(--mut)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:1rem;margin:1rem 0}.card.done{border-color:var(--ok)}
+.ab{display:grid;grid-template-columns:1fr 1fr;gap:.8rem}audio{width:100%}label{margin-right:1rem;white-space:nowrap}
+#bar{position:sticky;top:0;background:var(--bg);padding:.5rem 0;border-bottom:1px solid var(--line);z-index:2}
+button{font:inherit;padding:.4rem .8rem;border:1px solid var(--acc);border-radius:6px;background:var(--acc);color:#fff;cursor:pointer}
+</style></head><body><main>
+<div id="bar"><b id="prog">0 / 0</b> <span class="mut">(saved automatically in this browser)</span> <button id="dl">Download answers</button></div>
+<h1>Which one sounds sadder?</h1>
+<p>Each pair is the same sentence read twice. Play both, then pick the one that sounds sadder. Go with your first
+impression; it takes a few seconds per pair. Headphones help.</p>
+<div id="trials"></div></main>
+<script>
+const PAGE_ID="__PAGE_ID__", TRIALS=__TRIALS__, KEY="pairs-"+PAGE_ID; let R={};
+try{R=JSON.parse(localStorage.getItem(KEY)||"{}")}catch(e){}
+const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(R))}catch(e){}};
+const OPT=[["A","A is sadder"],["B","B is sadder"],["same","Cannot tell"]];
+function status(){let n=0;TRIALS.forEach(t=>{const ok=!!R[t.label];if(ok)n++;document.getElementById("c_"+t.label).classList.toggle("done",ok)});
+ document.getElementById("prog").textContent=n+" / "+TRIALS.length}
+TRIALS.forEach((t,i)=>{const c=document.createElement("div");c.className="card";c.id="c_"+t.label;
+ c.innerHTML=`<b>Pair ${i+1} of ${TRIALS.length}</b><div class=ab><div>A<audio controls preload="none" src="${t.a}"></audio></div>
+ <div>B<audio controls preload="none" src="${t.b}"></audio></div></div>`+OPT.map(([v,l])=>`<label><input type=radio name="${t.label}" value="${v}" ${R[t.label]==v?"checked":""}> ${l}</label>`).join("");
+ c.addEventListener("change",e=>{R[t.label]=e.target.value;save();status()});document.getElementById("trials").appendChild(c)});
+status();
+document.getElementById("dl").onclick=()=>{const a=document.createElement("a");
+ a.href=URL.createObjectURL(new Blob([JSON.stringify({page_id:PAGE_ID,kind:"pairs",exported_at:new Date().toISOString(),ratings:R},null,2)],{type:"application/json"}));
+ a.download="pairs_"+PAGE_ID+".json";a.click()};
+</script></body></html>
+"""
+
+
+def cmd_pairs(cfg, args):
+    """A short forced-choice page: the same sentence in both styles, 'which one sounds sadder?'. One question per pair,
+    a few seconds each, so a listener can check a model in minutes. Real recordings of the same sentences are mixed in."""
+    import numpy as np
+    import soundfile as sf
+
+    rng = random.Random(args.seed if args.seed is not None else cfg["eval"]["seed"])
+    page_id = args.name
+    leaked = [r for r in list(args.runs) + ["baseline", "finetuned", "reference", "sad", "default"] if r.lower() in page_id.lower()]
+    if leaked:
+        raise SystemExit(f"page name {page_id!r} contains {leaked}, which would unblind the listener; choose a neutral --name")
+    pairs = []   # (record, {style: source path})
+    for label in args.runs:
+        d = cfg.path("eval") / "runs" / label
+        if not (d / "metadata.jsonl").is_file():
+            raise SystemExit(f"run '{label}' has no metadata at {d}")
+        by = defaultdict(dict)
+        for r in load_jsonl(d / "metadata.jsonl"):
+            if not args.seeds or r["seed"] in args.seeds:
+                by[(r["item_id"], r["seed"])][r["style"]] = (r, d / r["wav"])
+        for (item, seed), v in sorted(by.items()):
+            if {"default", "sad"} <= set(v):
+                pairs.append(({"run": label, "item_id": item, "seed": seed, "text": v["sad"][0]["text"]},
+                              {s: v[s][1] for s in ("default", "sad")}))
+    if not args.no_reference:
+        es = read_json(eval_set_path(cfg))
+        test = {ex["id"]: ex for ex in load_jsonl(cfg.path("splits") / "test.jsonl")}
+        for it in es["items"]:
+            ref = it.get("reference_examples") or {}
+            if {"default", "sad"} <= set(ref):
+                pairs.append(({"run": REFERENCE_RUN, "item_id": it["item_id"], "seed": None, "text": test[ref["sad"]]["text"]},
+                              {s: cfg.path("processed") / test[ref[s]]["audio_path"] for s in ("default", "sad")}))
+    rng.shuffle(pairs)
+    page_dir = cfg.path("eval") / "listening" / page_id
+    key_path = cfg.path("eval") / "listening" / f"{page_id}.answer_key.json"   # outside page_dir on purpose
+    remove_tree(page_dir)
+    (page_dir / "clips").mkdir(parents=True)
+    trials, key, used = [], {}, set()
+    for rec, src in pairs:
+        while (lab := "p" + "".join(rng.choices(string.ascii_lowercase + string.digits, k=7))) in used:
+            pass
+        used.add(lab)
+        sad_side = rng.choice("AB")
+        order = {"A": "sad", "B": "default"} if sad_side == "A" else {"A": "default", "B": "sad"}
+        for side, style in order.items():
+            audio, sr = sf.read(str(src[style]), dtype="float32")
+            sf.write(page_dir / "clips" / f"{lab}{side}.wav", np.clip(audio, -1.0, 1.0), sr, subtype="PCM_16")
+        trials.append({"label": lab, "a": f"clips/{lab}A.wav", "b": f"clips/{lab}B.wav"})
+        key[lab] = rec | {"sad_side": sad_side}
+    (page_dir / "index.html").write_text(PAIRS_PAGE.replace("__PAGE_ID__", page_id).replace("__TRIALS__", json.dumps(trials)))
+    write_json(key_path, {"page_id": page_id, "kind": "pairs", "created_at": utc_now(), "runs": args.runs, "labels": key})
+    log(f"page: {page_dir / 'index.html'}  ({len(trials)} pairs)")
+    log(f"answer key (do not open before rating): {key_path}")
+
+
+def score_pairs(key, args):
+    rows = defaultdict(list)
+    for rf in args.ratings:
+        for lab, ans in read_json(rf)["ratings"].items():
+            if lab in key and ans:
+                rows[key[lab]["run"]].append("same" if ans == "same" else ("right" if ans == key[lab]["sad_side"] else "wrong"))
+    if not rows:
+        raise SystemExit("no answers matched the answer key")
+    out = [f"Answers from {len(args.ratings)} file(s). 'Picked the sad version' = the listener chose the clip generated (or recorded) "
+           "in the sad style as the sadder one. 50% = the two styles were not told apart.\n",
+           "| run | pairs | picked the sad version | picked the default version | cannot tell |", "|---|---|---|---|---|"]
+    for run in sorted(rows, key=lambda r: (r == REFERENCE_RUN, r)):
+        xs = rows[run]
+        out.append(f"| {run} | {len(xs)} | {xs.count('right') / len(xs):.0%} | {xs.count('wrong') / len(xs):.0%} | {xs.count('same') / len(xs):.0%} |")
+    return "\n".join(out)
+
+
 # ---------------------------------------------------------------- score
 # Page answers. Older pages offered "neutral" where current ones offer "not_sad"; both mean "not sad".
 # This speaker's real default recordings were heard as lively rather than neutral (set-b: all 8 rated "other"),
@@ -344,7 +467,14 @@ NOT_SAD = {"not_sad", "neutral", "other"}
 
 
 def cmd_score(cfg, args):
-    key = read_json(args.key)["labels"]
+    key_file = read_json(args.key)
+    key = key_file["labels"]
+    if key_file.get("kind") == "pairs":
+        text = score_pairs(key, args)
+        print(text)
+        if args.out:
+            Path(args.out).write_text(text + "\n")
+        return
     rows = defaultdict(list)
     n_files = n_incomplete = 0
     for rf in args.ratings:
@@ -481,6 +611,12 @@ def main():
     p.add_argument("--seed", type=int)
     p.add_argument("--no-reference", action="store_true", help="omit the real-recording controls")
     p.add_argument("--seeds", type=int, nargs="+", help="only model clips generated with these seeds (a shorter page)")
+    pp = sub.add_parser("pairs", help="build a short 'which one sounds sadder?' page")
+    pp.add_argument("--runs", nargs="+", required=True)
+    pp.add_argument("--name", default="pairs")
+    pp.add_argument("--seed", type=int)
+    pp.add_argument("--no-reference", action="store_true", help="omit the real-recording pairs")
+    pp.add_argument("--seeds", type=int, nargs="+", help="only model clips generated with these seeds (fewer pairs)")
     sc = sub.add_parser("score", help="aggregate exported ratings with the answer key")
     sc.add_argument("--key", required=True)
     sc.add_argument("--ratings", nargs="+", required=True)
@@ -490,7 +626,8 @@ def main():
     m.add_argument("--out")
     args = ap.parse_args()
     cfg = Config(args.config)
-    {"select": cmd_select, "generate": cmd_generate, "page": cmd_page, "score": cmd_score, "measure": cmd_measure}[args.cmd](cfg, args)
+    {"select": cmd_select, "generate": cmd_generate, "page": cmd_page, "pairs": cmd_pairs, "score": cmd_score,
+     "measure": cmd_measure}[args.cmd](cfg, args)
 
 
 if __name__ == "__main__":
