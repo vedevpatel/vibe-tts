@@ -4,10 +4,12 @@
 read speech, does it produce recognizably different delivery for the two styles on text it has never seen,
 while staying natural, intelligible and sounding like the same speaker?
 
-**Status.** The pipeline is built and verified, a checkpoint was trained and evaluated, and one blinded listening set
-(set-b) has been rated by one person. **The answer so far is mostly no:** the fine-tune moved the voice toward the target
-speaker and reproduced its lively default delivery, but its sad version was heard as sad in only 2 of 13 clips, against 5
-of 8 real sad recordings. Set-a is not yet rated. See [Results](#results).
+**Status.** Two checkpoints have been trained. **emotion-v1** moved the voice to the target speaker but its sad delivery
+was too weak to hear (one listener, set-b: 2 of 13 sad clips heard as sad). **emotion-v2** changed only the descriptions, to
+words the base model already understands, and on every automatic measure its two styles now differ about as much as the
+real recordings do (sad version scores sadder for 28 of 28 same-sentence pairs; arousal gap 0.13 against 0.14 for real
+speech) while keeping the speaker's voice. That is not yet confirmed by ear: a 22-pair, about 5-minute "which one sounds
+sadder?" page is ready (`outputs/expresso/listening/check-1/`). See [Results](#results).
 
 ## License: CC BY-NC 4.0, noncommercial
 
@@ -51,10 +53,18 @@ scripts/setup_train.sh                                 # isolated training env (
 .venv/bin/python scripts/evaluate_emotion.py select    # freeze the evaluation set
 scripts/run_colab_train.sh                             # Colab GPU: baseline generation, fine-tune, fine-tuned generation
 #   (--smoke checks the whole pipeline in a few minutes first; --keep-vm-on-failure keeps the VM if a late step fails)
+#   --run NAME labels the audio baseline-NAME / finetuned-NAME (emotion-v1 keeps the plain baseline / finetuned)
 .venv/bin/python scripts/evaluate_emotion.py measure --runs baseline finetuned     # descriptive acoustics, not ratings
+
+.venv/bin/python scripts/auto_evaluate.py download     # pinned evaluation models (emotion, speaker, Whisper)
+.venv/bin/python scripts/auto_evaluate.py calibrate    # check the automatic measures on real recordings, once
+.venv/bin/python scripts/auto_evaluate.py score --runs baseline finetuned           # automatic scores, minutes, no listening
+#   add --key <key.json> --ratings <ratings.json> to compare with a listener's ratings of the same clips
 .venv/bin/python scripts/evaluate_emotion.py page --runs baseline finetuned --name set-a
 #   listen in the browser, export ratings, then:
 .venv/bin/python scripts/evaluate_emotion.py score --key <key.json> --ratings <ratings.json>
+.venv/bin/python scripts/evaluate_emotion.py pairs --runs <run> --seeds 11 --name <neutral name>
+#   a 5-minute "which one sounds sadder?" page (same sentence in both styles); scored with the same `score` command
 ```
 
 `scripts/prepare_expresso.py --verify-only` re-checks the saved splits at any time.
@@ -92,8 +102,19 @@ sub-corpus exclusion above shrank its default audio; I followed the rule rather 
 cleanest median recording) and ex04 are reasonable alternatives: set `speaker.id` in the config and re-run.
 
 ### Descriptions and what was verified
+emotion-v1:
 - default: *"Expresso speaker ex02 speaks in a neutral delivery. The recording is clear with little background noise."*
 - sad: *"Expresso speaker ex02 speaks in a sad, subdued delivery. The recording is clear with little background noise."*
+
+emotion-v2 (current config):
+- default: *"Expresso speaker ex02 delivers an expressive and animated speech with a moderate speed and pitch. The recording is clear with little background noise."*
+- sad: *"Expresso speaker ex02 delivers a sad, monotone speech, speaking slowly with a low pitch. The recording is clear with little background noise."*
+
+Why v2: the unchanged model did not respond to "sad" at all (set-b), while "expressive and animated", "monotone", speed
+and pitch are the attribute words Parler-TTS Mini was trained on. Every v2 claim holds for ex02, sad relative to default
+(table below): F0 range 6.1 vs 11.3 semitones (monotone vs expressive), F0 median 223 vs 248 Hz (low pitch), pace 16.4 vs
+19.6 characters per active second (slowly). "Animated" for default is what a listener heard in the real recordings (set-b).
+The v1 rows of the table remain as they were.
 
 | claim | verdict | evidence (ex02, medians) |
 |---|---|---|
@@ -280,6 +301,65 @@ What this does and does not say:
   see Limitations.
 - One rater, 13-14 clips per cell, 8 per control cell: treat differences as indicative only.
 
+### Automatic measures (no listening)
+`scripts/auto_evaluate.py` scores generated audio in minutes, so models can be compared without a listening session.
+Every measure was checked on real recordings first ([`results/auto_calibration.md`](results/auto_calibration.md)) and
+then against the set-b ratings ([`results/auto_score_emotion-v1.md`](results/auto_score_emotion-v1.md)). Models (pinned,
+none Chinese-developed): audEERING `wav2vec2-large-robust-12-ft-emotion-msp-dim` (CC BY-NC-SA 4.0), Microsoft
+`wavlm-base-plus-sv`, OpenAI `whisper-large-v3-turbo` (MIT).
+
+| measure | what it is | check on real recordings | agreement with the set-b listener |
+|---|---|---|---|
+| P(sad) | logistic regression on emotion embeddings, trained on ex02's 600 train-split clips | held-out default vs sad: 100% correct | AUC 0.83 for "heard as sad"; **more lenient than the listener** |
+| arousal | the emotion model's own output; no training here | AUC 0.95 (ex02), 0.89 (three other speakers) | AUC 0.65 |
+| speaker similarity | x-vector cosine similarity to ex02's train-split centroid | ex02 0.93 vs other speakers 0.54 (AUC 0.90) | Spearman +0.74 with speaker consistency |
+| WER | Whisper word error rate | 3.2% on real speech | weak (everything is intelligible) |
+
+A naturalness predictor (torchaudio SQUIM MOS) was tried and dropped: it gave 4.43-4.44 for every clip, including the
+baseline the listener rated 2.5, so it measured nothing.
+
+What the automatic measures say about emotion-v1 (56 clips per model, both seeds; 8 real recordings per style):
+
+| | classified sad (default / sad) | sad version scores sadder, same sentence | median arousal (default / sad) | speaker similarity |
+|---|---|---|---|---|
+| baseline | 82% / 89% (not this speaker; meaningless) | 50% | 0.352 / 0.368 | 0.68-0.69 |
+| fine-tuned v1 | 11% / 61% | 89% | 0.493 / 0.443 | 0.92-0.95 |
+| real recordings | 0% / 100% | 100% | 0.540 / 0.398 | 0.91 |
+
+So v1 learned a measurable part of the sad style (its sad clips usually score sadder than its default clips of the same
+sentence) but the effect is about a third of the real one in arousal (a gap of 0.05 against 0.14), and too weak for a
+listener to hear as sad (2 of 13). How to use these numbers: compare models of this speaker by the paired "sadder" share
+and the arousal gap against the real recordings, then confirm the best one with a short `pairs` page. P(sad) is
+meaningless for a voice that is not ex02, and a high P(sad) does not by itself mean a clip sounds sad.
+
+### emotion-v2: descriptions in the base model's vocabulary (automatic measures)
+Same data, seed, settings and checkpoint selection as v1 (validation loss lowest at epoch 4 again: 4.022, v1 4.030; the
+exported checkpoint is step 148). Only the descriptions changed (see [Descriptions](#descriptions-and-what-was-verified)).
+Full output: [`results/auto_score_emotion-v2.md`](results/auto_score_emotion-v2.md); acoustics in `outputs/expresso/measurements.md`.
+
+| | sad version scores sadder, same sentence | sad version has lower arousal | arousal gap (default - sad) | classified sad (default / sad) | speaker similarity |
+|---|---|---|---|---|---|
+| fine-tuned v1 | 89% | 71% | 0.05 | 11% / 61% | 0.92 / 0.95 |
+| **fine-tuned v2** | **100%** | **96%** | **0.13** | **4% / 89%** | 0.90 / 0.95 |
+| real recordings | 100% | 100% | 0.14 | 0% / 100% | 0.91 / 0.92 |
+
+| acoustics (medians) | sad / default duration | F0 median default -> sad | F0 range default -> sad | level sad - default |
+|---|---|---|---|---|
+| fine-tuned v1 | 1.07 | 260 -> 252 Hz | 8.9 -> 7.3 st | +0.4 dB |
+| **fine-tuned v2** | **1.14** | **251 -> 218 Hz** | **10.7 -> 6.7 st** | **-1.3 dB** |
+| real recordings | 1.18 | 263 -> 234 Hz | 10.8 -> 7.6 st | -1.4 dB |
+
+- **v2 reproduces the real contrast on every measure**, in size as well as direction; v1 had the direction but about a
+  third of the size. Its sad arousal (0.379) is close to the real sad recordings (0.398).
+- **The words matter more than the training.** The unchanged model, given the v2 descriptions, already speaks the two
+  styles differently (sad version lower in arousal for 89% of pairs), unlike with v1's "sad" (39%). But it does so by
+  switching voices (sad F0 129 Hz, speaker similarity 0.45): fine-tuning is what keeps it the same speaker.
+- **One new failure:** one v2 clip of 56 stops after its first word ("Well," then silence, 0.43 s; `new03_default_s11`),
+  which is most of v2's 5.8% default word error rate. v1 had none under 1 s. Too few clips to say whether this is a
+  real regression.
+- These are automatic measures. They were checked on real recordings and against one listener, and they are more
+  lenient than that listener was, so v2 still has to be confirmed by ear.
+
 ### Listen
 Two blinded pages are ready (open `index.html` in a browser; ratings save automatically in that browser and export as JSON):
 
@@ -296,20 +376,20 @@ answer keys are `outputs/expresso/listening/set-{a,b}.answer_key.json`; do not o
 ```
 
 ### Next steps
-1. Rate set-a (128 clips, new wording), ideally with more than one rater, and score it with
-   `evaluate_emotion.py score --key ... --ratings <one file per rater>`.
-2. Strengthen the sad signal and retrain. The default description says "neutral", which listening contradicts for this
-   speaker, so the two descriptions should be rewritten to describe what each style actually sounds like (for example an
-   animated default against a slow, low, quiet sad). Other levers: more style-focused training (epochs, learning rate),
-   more sad data or speakers, and comparing the step-370 checkpoint. Use `evaluate_emotion.py measure` as a cheap check
-   before another listening round.
+1. Listen to `outputs/expresso/listening/check-1/index.html` (22 pairs, about 5 minutes: same sentence in both styles,
+   "which one sounds sadder?", 8 of them real recordings as a check), download the answers, and score them:
+   `evaluate_emotion.py score --key outputs/expresso/listening/check-1.answer_key.json --ratings ~/Downloads/pairs_check-1.json`.
+2. If v2 is heard as sadder: watch the early-stop failure (one clip of 56) on more sentences.
+3. If not: more style-focused training (epochs, learning rate) or more sad data, screened with `auto_evaluate.py score`.
 
 ### Artifacts
 | what | where | notes |
 |---|---|---|
 | fine-tuned checkpoint (step 148) | `data/expresso/runs/emotion-v1/export/` | sha256 verified; carries `NONCOMMERCIAL_NOTICE.md`; **not published** |
+| emotion-v2 checkpoint (step 148) | `data/expresso/runs/emotion-v2/export/` | same; v2 descriptions |
+| automatic scores | `outputs/expresso/auto/` (per-clip JSON, cache), summaries in `results/auto_*.md` | |
 | training record | `data/expresso/runs/emotion-v1/{train_config.json,environment.json,train.log}` | |
-| generated audio + metadata | `outputs/expresso/runs/{baseline,finetuned}/` | raw float32 WAVs + `metadata.jsonl` |
+| generated audio + metadata | `outputs/expresso/runs/{baseline,finetuned}/` (v1), `{baseline,finetuned}-emotion-v2/` | raw float32 WAVs + `metadata.jsonl` |
 | measurements | `outputs/expresso/measurements.md` | |
 | inventory, speaker choice, claim checks | `data/expresso/inventory/` | |
 | prepared audio, manifests, splits | `data/expresso/processed/`, `data/expresso/splits/` | test split frozen |
