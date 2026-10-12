@@ -5,9 +5,9 @@ read speech, does it produce recognizably different delivery for the two styles 
 while staying natural, intelligible and sounding like the same speaker?
 
 **Status.** The pipeline is built and verified, a checkpoint was trained and evaluated, and one blinded listening set
-(set-b) has been rated by one person. **The result is negative on the main question:** the fine-tune moved the voice
-toward the target speaker, but the rater could not tell its default from its sad delivery. Set-a is not yet rated. See
-[Results](#results).
+(set-b) has been rated by one person. **The answer so far is mostly no:** the fine-tune moved the voice toward the target
+speaker and reproduced its lively default delivery, but its sad version was heard as sad in only 2 of 13 clips, against 5
+of 8 real sad recordings. Set-a is not yet rated. See [Results](#results).
 
 ## License: CC BY-NC 4.0, noncommercial
 
@@ -99,7 +99,7 @@ cleanest median recording) and ex04 are reasonable alternatives: set `speaker.id
 |---|---|---|
 | clear, little background noise | supported | noise floor -60.1 dBFS (default), -62.7 dBFS (sad); 95th percentile -57.5 / -56.6 |
 | sad is subdued | supported | speech level -20.7 vs -19.7 dBFS; F0 223 vs 248 Hz; F0 range 6.1 vs 11.3 semitones; pace 16.4 vs 19.6 characters per active second (share of time speaking is equal) |
-| default is neutral | label only | Expresso's unmarked read style; not measurable |
+| default is neutral | label only, **contradicted by listening** | Expresso's unmarked read style; not measurable. In set-b a listener heard all 8 real default recordings as lively ("upbeat-ish", "passionate - energetic"), not neutral |
 | "conversational" | not verifiable, **dropped** | the clips are read-aloud sentences |
 
 These are acoustic measurements. They do not show that the delivery *sounds* sad; that needs a listener (see the
@@ -186,16 +186,16 @@ Validation loss is computed every epoch with a checkpoint saved at the same step
 - **Blinded listening page** (`page`): opaque shuffled clip labels; real held-out recordings of the same sentences are mixed
   in as hidden controls; two real reference recordings of the speaker are shown openly for the speaker-consistency question.
   The answer key is written *next to* the page directory, never inside it. For each clip the listener gives: the emotion
-  they hear (neutral / sad / other / cannot tell), naturalness (1-5), intelligibility (1-5), and speaker consistency with
+  whether it sounds sad (not sad / sad / some other emotion / cannot tell; set-b offered "neutral" instead of "not sad"), naturalness (1-5), intelligibility (1-5), and speaker consistency with
   the reference voice (1-5). Ratings stay in the browser and are exported as JSON/CSV; `score` joins them with the key.
 - **Nothing is rated automatically.** No claim about emotion, naturalness or identity is made without listener ratings.
 
 ## Results
 
-**One blinded listening set (set-b, 72 clips, one rater) has been scored; set-a is unrated.** The listening result does not
-show that the model learned recognizably different emotional delivery. It does suggest the voice moved toward the target
-speaker and stayed natural and intelligible. The rating is a single person on a small set, so it is indicative only, and
-the controls (below) show the rating itself is unreliable. Alongside it are the machine measurements.
+**One blinded listening set (set-b, 72 clips, one rater) has been scored; set-a is unrated.** The real recordings of the
+two styles were told apart; the fine-tuned model's were barely told apart, and the baseline's not at all. The fine-tune
+did move the voice toward the target speaker. One rater on a small set is indicative, not conclusive. Alongside the
+listening result are the machine measurements.
 
 ### Training run (Colab L4, `runs/emotion-v1`)
 Python 3.13.15, torch 2.11.0+cu130, transformers 4.46.1, accelerate 1.15.0, datasets 3.6.0, upstream `d108732cd577`,
@@ -240,31 +240,44 @@ What these numbers do and do not say:
   None of this says whether the output sounds sad, natural, intelligible, or like the same person. Only listening can.
 
 ### Listening result, set-b (one rater, 72 clips)
-`scripts/evaluate_emotion.py score` output, also saved as [`results/score_set-b.md`](results/score_set-b.md) with the raw
-ratings in [`results/ratings_set-b.json`](results/ratings_set-b.json). Emotion correct = the rater's choice equals the
-intended style; Likert scores are 1-5.
+`scripts/evaluate_emotion.py score` output, saved as [`results/score_set-b.md`](results/score_set-b.md) with the raw
+ratings in [`results/ratings_set-b.json`](results/ratings_set-b.json). 3 of 72 ratings were incomplete and are skipped.
+"Not sad" includes "some other emotion"; Likert scores are 1-5.
 
-| run | intended style | n | emotion correct | naturalness | intelligibility | speaker consistency |
-|---|---|---|---|---|---|---|
-| baseline | default | 13 | 62% | 2.62 | 4.38 | 1.00 |
-| baseline | sad | 14 | 0% | 2.43 | 4.36 | 1.00 |
-| fine-tuned | default | 13 | 15% | 3.08 | 4.69 | 2.92 |
-| fine-tuned | sad | 13 | 15% | 3.31 | 5.00 | 4.31 |
-| real recordings (hidden controls) | default | 8 | 0% | 3.12 | 5.00 | 4.00 |
-| real recordings (hidden controls) | sad | 8 | 62% | 4.50 | 5.00 | 4.50 |
+| run | intended style | n | heard as sad | heard as not sad | cannot tell | naturalness | intelligibility | speaker consistency |
+|---|---|---|---|---|---|---|---|---|
+| baseline | default | 13 | 8% | 77% | 15% | 2.62 | 4.38 | 1.00 |
+| baseline | sad | 14 | 0% | 57% | 43% | 2.43 | 4.36 | 1.00 |
+| fine-tuned | default | 13 | 0% | 100% | 0% | 3.08 | 4.69 | 2.92 |
+| fine-tuned | sad | 13 | 15% | 62% | 23% | 3.31 | 5.00 | 4.31 |
+| real recordings (hidden controls) | default | 8 | 0% | 100% | 0% | 3.12 | 5.00 | 4.00 |
+| real recordings (hidden controls) | sad | 8 | 62% | 38% | 0% | 4.50 | 5.00 | 4.50 |
+
+Separation (heard as sad for sad clips minus for default clips): **real recordings +62 points, fine-tuned +15, baseline -8.**
+
+| answers (counts) | neutral | other | sad | cannot tell |
+|---|---|---|---|---|
+| baseline default / sad | 8 / 6 | 2 / 2 | 1 / 0 | 2 / 6 |
+| fine-tuned default / sad | 2 / 4 | 11 / 4 | 0 / 2 | 0 / 3 |
+| real default / sad | 0 / 0 | 8 / 3 | 0 / 5 | 0 / 0 |
 
 What this does and does not say:
-- **Emotion was not recognized in the fine-tuned output.** 15% correct for both styles is at or below chance for a two-way
-  choice. The rater did not hear the fine-tuned default and sad as different in the intended way. The machine measurements
-  point the same way: the effect is in the right direction but weak (sad is 1.07x longer than default against 1.18x in the
-  real recordings, and the level does not drop).
-- **The rating itself is not trustworthy yet.** The hidden real recordings should be the easy case, but real default clips
-  scored 0% and real sad only 62%. That points to a rater bias (for example hearing everything as sad), a labeling or polarity
-  problem in the page or scorer, or both. This has not been diagnosed. Until it is, the 15% and 62% figures should not be read
-  as the model's true performance.
-- **The voice and quality did improve.** Speaker consistency rises from 1.00 (baseline, which never heard this speaker) to
-  2.9-4.3, and naturalness and intelligibility are at or above the baseline. The baseline's 1.00 consistency is not preserved
-  identity; see Limitations.
+- **ex02's "default" is not neutral to a listener.** All 8 real default recordings were heard as "some other emotion", with
+  notes such as "upbeat-ish" and "passionate - energetic". An earlier version of the scorer counted only "neutral" as
+  correct for default, which scored the real default recordings 0% and the fine-tune 15%. That was a mismatch between the
+  page's options and this speaker, not a bug in the page or the key (all 72 labels matched). The scorer now measures sad vs
+  not sad, and the set-a page asks "Does this clip sound sad?" with "Not sad (neutral, calm or upbeat)" as an option. This
+  change was made after seeing set-b, so set-a, with the new wording, is the cleaner test.
+- **The fine-tune learned the speaker's default delivery.** Its default clips were heard like the real ones (11 of 13
+  "other", against 8 of 8). The baseline's were mostly heard as "neutral".
+- **It did not learn a recognizably sad delivery.** Its sad clips were less lively than its default (4 of 13 "other"
+  against 11 of 13) but were heard as sad in only 2 of 13, against 5 of 8 real sad recordings. The machine measurements agree:
+  the effect is in the right direction but weak (sad is 1.07x longer than default, against 1.18x in the real recordings, and
+  the level does not drop).
+- **The baseline does not respond to the description at all** (separation -8; many "cannot tell" for its sad clips).
+- **The voice and quality improved.** Speaker consistency rises from 1.00 (baseline, which never heard this speaker) to
+  2.9-4.3, and naturalness and intelligibility are at or above the baseline. The baseline's 1.00 is not preserved identity;
+  see Limitations.
 - One rater, 13-14 clips per cell, 8 per control cell: treat differences as indicative only.
 
 ### Listen
@@ -283,11 +296,13 @@ answer keys are `outputs/expresso/listening/set-{a,b}.answer_key.json`; do not o
 ```
 
 ### Next steps
-1. Diagnose why the real controls scored 0% / 62% (page labeling, scorer polarity, rater bias), then rate set-a, ideally with
-   more than one rater.
-2. If emotion separation is still absent, strengthen the signal and retrain: more distinct sad/default descriptions (slower,
-   lower, quieter), more style-focused training (epochs, learning rate, more sad data or speakers), and compare against the
-   step-370 checkpoint. Use `evaluate_emotion.py measure` as a cheap check before another listening round.
+1. Rate set-a (128 clips, new wording), ideally with more than one rater, and score it with
+   `evaluate_emotion.py score --key ... --ratings <one file per rater>`.
+2. Strengthen the sad signal and retrain. The default description says "neutral", which listening contradicts for this
+   speaker, so the two descriptions should be rewritten to describe what each style actually sounds like (for example an
+   animated default against a slow, low, quiet sad). Other levers: more style-focused training (epochs, learning rate),
+   more sad data or speakers, and comparing the step-370 checkpoint. Use `evaluate_emotion.py measure` as a cheap check
+   before another listening round.
 
 ### Artifacts
 | what | where | notes |
@@ -310,7 +325,7 @@ answer keys are `outputs/expresso/listening/set-{a,b}.answer_key.json`; do not o
   main risk; validation loss is used for checkpoint selection and the listening test uses sentences never seen in training.
 - The acoustic checks on the descriptions are measurements, not perception.
 - With a small number of clips and raters, ratings are indicative, not statistically conclusive. So far there is one rater
-  on one set, and the hidden controls were misjudged (see Results), so the rating itself needs diagnosing.
+  on one set.
 - One training run, one seed for training (456) and two for generation: no estimate of run-to-run variance beyond the fact that
   two identical runs agreed on validation loss.
 - Same seed does not mean same audio across devices; comparisons are only valid between runs on the same device.
