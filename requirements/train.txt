@@ -1,0 +1,45 @@
+# Extra pins for the isolated training environment (.venv-train, scripts/setup_train.sh).
+# Installed ON TOP of requirements/base.txt (minus its fsspec line) and the platform torch file.
+#
+# Why a separate environment: datasets 3.6.0 requires fsspec<=2025.3.0 but base.txt pins
+# fsspec==2026.9.0, so the training packages cannot join the inference environment without moving
+# a pin the working inference setup was verified with. datasets is held below 4.0 because 4.x
+# decodes audio through torchcodec and no longer returns the {"array": ...} dict that the pinned
+# upstream training script indexes. transformers stays 4.46.1 (base.txt).
+#
+# Provenance: resolved with `uv pip compile` against base.txt (fsspec removed) and
+# requirements/mac-arm64.txt on macOS arm64 / Python 3.11. Direct deps first, then transitive.
+# wandb is imported by the upstream training/utils.py but never logged to (WANDB_MODE=disabled).
+
+# --- Direct dependencies (what training/*.py imports) ---
+accelerate==1.15.0
+datasets==3.6.0
+evaluate==0.4.6
+jiwer==4.0.0
+wandb==0.28.0
+fsspec==2025.3.0
+
+# --- Transitive pins ---
+aiohappyeyeballs==2.7.1
+aiohttp==3.14.4
+aiosignal==1.4.0
+annotated-types==0.8.0
+attrs==26.1.0
+click==8.5.0
+dill==0.3.8
+frozenlist==1.8.0
+gitdb==4.0.12
+gitpython==3.2.0
+multidict==6.9.1
+multiprocess==0.70.16
+pandas==3.0.6
+propcache==0.5.4
+pyarrow==25.0.1
+pydantic==2.13.5
+pydantic-core==2.46.5
+rapidfuzz==3.14.6
+sentry-sdk==2.71.0
+smmap==5.0.3
+typing-inspection==0.4.4
+xxhash==4.0.1
+yarl==1.25.1
