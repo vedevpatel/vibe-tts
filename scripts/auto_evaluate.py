@@ -16,6 +16,8 @@ Subcommands (all read configs/expresso_emotion.toml; run from any directory):
   score      Apply the measures to generated runs (the same eval set as the listening pages), next to the
              real recordings of the same sentences. With --key and --ratings, also compare every measure
              with a listener's ratings of the same clips.
+  completeness  Flag clips that stop early (the end of the text missing from Whisper's transcript, or far too short
+             for the text) or need a listen, with the same rule first applied to real held-out recordings.
 
 These are proxies for what a listener hears, not ratings. Each one is reported next to what real recordings
 score, and the sadness measure is only meaningful if calibrate shows that it separates the real styles.
@@ -203,7 +205,8 @@ class Measures:
             from transformers import WhisperTokenizer
 
             self.models["normalizer"] = WhisperTokenizer.from_pretrained(eval_model_dir("asr"))
-        return self.models["normalizer"].normalize(strip_emphasis_markers(text)).split()
+        words = self.models["normalizer"].normalize(strip_emphasis_markers(text)).split()
+        return [w for w in words if any(ch.isalnum() for ch in w)]   # it leaves "..." as a lone "."
 
 
 def word_errors(ref, hyp):
@@ -215,6 +218,41 @@ def word_errors(ref, hyp):
             cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (r != h)))
         prev = cur
     return prev[-1]
+
+
+def trailing_missing(ref, hyp):
+    """How many words at the END of the reference were not heard: the reference words after the last word heard exactly,
+    minus the words heard after it (edit-distance alignment). 'Well, that is one way to look at it.' heard as 'Well,'
+    gives 8; '... and nobody ever asked us to be anywhere else' heard as '... and no one' gives 6; '... at six forty five
+    AM' heard as '... at 6.45 a.m.' gives 0 (the end was said, Whisper just wrote it differently)."""
+    n, m = len(ref), len(hyp)
+    d = [[i + j if i == 0 or j == 0 else 0 for j in range(m + 1)] for i in range(n + 1)]
+    for i in range(1, n + 1):
+        for j in range(1, m + 1):
+            d[i][j] = min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (ref[i - 1] != hyp[j - 1]))
+    i, j = n, m
+    while i and j:   # backtrace from the end to the last exact match
+        if ref[i - 1] == hyp[j - 1] and d[i][j] == d[i - 1][j - 1]:
+            return max(0, (n - i) - (m - j))
+        if d[i][j] == d[i - 1][j - 1] + 1:
+            i, j = i - 1, j - 1
+        elif d[i][j] == d[i - 1][j] + 1:
+            i -= 1
+        else:
+            j -= 1
+    return max(0, n - m)
+
+
+def end_gap_db(path):
+    """How far the last 100 ms sit below the clip's own speech level. Speech ends in silence (real recordings: 36 dB or
+    more); a clip cut off mid-word ends loud (emotion-v2's two cut-offs: 3-5 dB)."""
+    import numpy as np
+    import soundfile as sf
+    from expresso_common import analyze_audio
+
+    audio, sr = sf.read(str(path), dtype="float32", always_2d=True)
+    tail = audio.mean(axis=1)[-int(0.1 * sr):]
+    return analyze_audio(path)["speech_level_dbfs"] - 20 * np.log10(np.sqrt(np.mean(tail ** 2)) + 1e-9)
 
 
 # ---------------------------------------------------------------- real-recording sets
@@ -478,6 +516,113 @@ def cmd_score(cfg, args):
         Path(args.out).write_text(text + "\n")
 
 
+# ---------------------------------------------------------------- completeness
+TOO_SHORT = 0.5        # a clip under half the time this speaker needs to say the text cannot hold all of it
+TOO_LONG = 2.5         # over 2.5x (plus 1 s) suggests babbling or a long silent tail
+GARBLED_WER = 0.25     # complete but with a quarter of the words wrong: worth a listen
+CUT_OFF_DB = 15.0      # ending less than this far below the speech level = cut off mid-word (see end_gap_db)
+
+
+def completeness_flags(ref, hyp, text, style, duration, pace, end_gap):
+    """('incomplete' | 'check' | None, detail). pace: this speaker's characters per second of speech, per style."""
+    miss = trailing_missing(ref, hyp)
+    expected = len(strip_emphasis_markers(text)) / pace[style]
+    wer = word_errors(ref, hyp) / max(len(ref), 1)
+    if miss >= 2 or (miss and miss / len(ref) >= 1 / 3):
+        return "incomplete", f"last {miss} of {len(ref)} words missing"
+    if end_gap < CUT_OFF_DB:
+        return "incomplete", f"ends mid-sound (last 100 ms only {end_gap:.0f} dB below the speech level)"
+    if duration < TOO_SHORT * expected:
+        return "incomplete", f"{duration:.2f} s, under half the {expected:.2f} s this text needs"
+    if duration > TOO_LONG * expected + 1.0:
+        return "check", f"{duration:.2f} s, more than {TOO_LONG}x the {expected:.2f} s this text needs"
+    if wer >= GARBLED_WER:
+        return "check", f"word error rate {wer:.0%}"
+    return None, ""
+
+
+def cmd_completeness(cfg, args):
+    """Flag generated clips that stop early (or need a listen), after checking the same rule on real recordings."""
+    import soundfile as sf
+    from scipy.stats import binomtest
+
+    cfg.require_data_root()
+    m = Measures(cfg)
+    checks = read_json(cfg.path("processed") / "description_checks.json")["per_style"]
+    pace = {s: v["chars_per_active_s"] for s, v in checks.items()}
+
+    def evaluate(path, text, style, duration):
+        ref, hyp = m.normalize_text(text), m.transcript(path)
+        flag, detail = completeness_flags(ref, m.normalize_text(hyp), text, style, duration, pace, end_gap_db(path))
+        return {"flag": flag, "detail": detail, "transcript": hyp}
+
+    real = speaker_clips(cfg, "validation") + speaker_clips(cfg, "test")
+    real_flags = []
+    for c in real:
+        r = evaluate(c["path"], c["text"], c["style"], sf.info(str(c["path"])).duration)
+        real_flags.append(r | {"id": c["id"], "text": c["text"]})
+    m.save()
+
+    clips = []
+    for label in args.runs:
+        d = cfg.path("eval") / "runs" / label
+        if not (d / "metadata.jsonl").is_file():
+            raise SystemExit(f"run '{label}' has no metadata at {d}")
+        recs = load_jsonl(d / "metadata.jsonl")
+        for i, r in enumerate(recs, 1):
+            group = r["item_id"].rstrip("0123456789")
+            clips.append({"run": label, "group": group, "style": r["style"], "clip_id": r["clip_id"], "text": r["text"],
+                          "duration_s": r["duration_s"], "path": str(d / r["wav"])}
+                         | evaluate(d / r["wav"], r["text"], r["style"], r["duration_s"]))
+            if i % 20 == 0 or i == len(recs):
+                log(f"{label}: {i}/{len(recs)}")
+                m.save()
+
+    def rate(k, n):
+        ci = binomtest(k, n).proportion_ci(method="wilson")
+        return f"{k}/{n} ({k / n:.0%}; 95% CI {ci.low:.0%}-{ci.high:.0%})"
+
+    n_real_inc = sum(r["flag"] == "incomplete" for r in real_flags)
+    lines = ["# Early stops and other incomplete speech", "",
+             f"Rule: incomplete if Whisper's transcript lacks the last 2+ words (or the last third) of the text, the clip ends "
+             f"mid-sound (last 100 ms less than {CUT_OFF_DB:.0f} dB below its speech level), or it is "
+             f"under {TOO_SHORT}x the time ex02 needs for the text (characters / ex02's speaking pace for that style). "
+             f"'Check' = complete but over {TOO_LONG}x that time, or a word error rate of {GARBLED_WER:.0%} or more.", "",
+             f"**The rule on {len(real)} real held-out recordings:** {rate(n_real_inc, len(real))} flagged incomplete, "
+             f"{sum(r['flag'] == 'check' for r in real_flags)} flagged to check.", ""]
+    for r in real_flags:
+        if r["flag"]:
+            lines.append(f"- real `{r['id']}` ({r['flag']}: {r['detail']}): \"{r['text']}\" heard as \"{r['transcript']}\"")
+    for label in args.runs:
+        cs = [c for c in clips if c["run"] == label]
+        groups = sorted({c["group"] for c in cs}, key=lambda g: ["short", "medium", "long"].index(g) if g in ("short", "medium", "long") else 9)
+        lines += ["", f"## {label}", "", "| length | style | clips | incomplete | to check |", "|---|---|---|---|---|"]
+        for g in groups:
+            for s in sorted({c["style"] for c in cs}):
+                xs = [c for c in cs if c["group"] == g and c["style"] == s]
+                if xs:
+                    lines.append(f"| {g} | {s} | {len(xs)} | {sum(c['flag'] == 'incomplete' for c in xs)} | {sum(c['flag'] == 'check' for c in xs)} |")
+        inc = sum(c["flag"] == "incomplete" for c in cs)
+        lines += ["", f"**Incomplete overall: {rate(inc, len(cs))}.**"]
+        for s in sorted({c["style"] for c in cs}):
+            xs = [c for c in cs if c["style"] == s]
+            lines.append(f"- {s}: {rate(sum(c['flag'] == 'incomplete' for c in xs), len(xs))}")
+        flagged = [c for c in cs if c["flag"]]
+        if flagged:
+            lines += ["", "Flagged clips (listen to these):", ""]
+            for c in flagged:
+                lines.append(f"- `{c['clip_id']}` {c['flag']}: {c['detail']}. \"{c['text']}\" heard as \"{c['transcript']}\" "
+                             f"(`{c['path']}`)")
+    text = "\n".join(lines)
+    out = auto_dir(cfg)
+    write_json(out / f"completeness_{'_'.join(args.runs)}.json", {"created_at": utc_now(), "runs": args.runs, "pace": pace,
+                                                                  "real": real_flags, "clips": clips})
+    (out / f"completeness_{'_'.join(args.runs)}.md").write_text(text + "\n")
+    print(text)
+    if args.out:
+        Path(args.out).write_text(text + "\n")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--config", help="path to the experiment config")
@@ -490,9 +635,12 @@ def main():
     s.add_argument("--key", help="listening-page answer key, to compare with --ratings")
     s.add_argument("--ratings", nargs="+")
     s.add_argument("--out")
+    k = sub.add_parser("completeness", help="flag clips that stop early or need a listen")
+    k.add_argument("--runs", nargs="+", required=True)
+    k.add_argument("--out")
     args = ap.parse_args()
     cfg = Config(args.config)
-    {"download": cmd_download, "calibrate": cmd_calibrate, "score": cmd_score}[args.cmd](cfg, args)
+    {"download": cmd_download, "calibrate": cmd_calibrate, "score": cmd_score, "completeness": cmd_completeness}[args.cmd](cfg, args)
 
 
 if __name__ == "__main__":
