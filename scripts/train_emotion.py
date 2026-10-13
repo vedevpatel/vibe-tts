@@ -327,6 +327,8 @@ def cmd_export(cfg, args):
         "validation_loss_by_step": {str(s): l for s, l in sorted(scored.items())},
         "base_model": read_json(base / "REVISION.json") if (base / "REVISION.json").is_file() else str(base),
         "speaker": speaker, "styles": styles, "license": "CC BY-NC 4.0 (derived from Expresso); noncommercial, not published",
+        # the exact text the model was trained with, so speak.py --style never pairs it with a later config's descriptions
+        "descriptions": {s: description_for(cfg, speaker, s) for s in styles},
         "dataset_source": src.get("source_url"), "dataset_archive_md5": src.get("archive", {}).get("md5"),
         "train_config_sha256": sha256_file(rd / "train_config.json"),
         "weights_sha256": sha256_file(dest / "model.safetensors"),
