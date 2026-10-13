@@ -38,10 +38,10 @@ Flagged clips (listen to these):
 
 | length | style | clips | incomplete | to check |
 |---|---|---|---|---|
-| test | default | 16 | 0 | 0 |
-| test | sad | 16 | 0 | 0 |
 | new | default | 12 | 1 | 0 |
 | new | sad | 12 | 0 | 0 |
+| test | default | 16 | 0 | 0 |
+| test | sad | 16 | 0 | 0 |
 
 **Incomplete overall: 1/56 (2%; 95% CI 0%-9%).**
 - default: 1/28 (4%; 95% CI 1%-18%)
@@ -55,10 +55,10 @@ Flagged clips (listen to these):
 
 | length | style | clips | incomplete | to check |
 |---|---|---|---|---|
-| test | default | 16 | 0 | 0 |
-| test | sad | 16 | 0 | 0 |
 | new | default | 12 | 0 | 0 |
 | new | sad | 12 | 0 | 0 |
+| test | default | 16 | 0 | 0 |
+| test | sad | 16 | 0 | 0 |
 
 **Incomplete overall: 0/56 (0%; 95% CI 0%-6%).**
 - default: 0/28 (0%; 95% CI 0%-12%)
