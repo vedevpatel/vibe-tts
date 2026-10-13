@@ -126,6 +126,68 @@ new_sentences = [
   "We will find out what happened soon enough.",
   "He read the letter twice and put it away.",
 ]
+[speak]
+# The fine-tune that `scripts/run.sh --style default|sad` speaks with: a run under <data root>/runs with an export/.
+# Its descriptions come from that export (export_info.json), not from [description] above.
+run = "emotion-v2"
+
+[robustness]
+# A larger batch of new sentences (checked at run time to be absent from the release) for measuring how often a model
+# stops early or garbles words: evaluate_emotion.py generate --set robustness, then auto_evaluate.py completeness.
+# Three length groups; several start with "Well," / "Oh," / "So," because emotion-v2's one early stop in the eval set
+# came right after "Well,". Every sentence is spoken in both styles with each seed.
+seeds = [11]
+short = [
+  "I know.", "Well, maybe.", "Maybe next week.", "Come here, please.", "Where did it go?",
+  "That was quick.", "Oh, I see.", "Thank you so much.", "It is late.", "So, what now?",
+  "He left early.", "Nobody called back.", "Well, that's that.", "Is this yours?", "We tried our best.",
+  "The lights went out.", "Close the window.", "See you soon.", "Right, let's begin.", "It rained all night.",
+]
+medium = [
+  "Well, I suppose we could try again tomorrow morning.",
+  "The train was delayed, so we waited on the platform.",
+  "She found the old photograph at the bottom of the drawer.",
+  "Do you remember the name of that little restaurant?",
+  "I left my umbrella on the bus this afternoon.",
+  "Oh, you should have told me about the meeting earlier.",
+  "They painted the kitchen a pale shade of yellow.",
+  "Nobody noticed when the music finally stopped playing.",
+  "So, the results came back and nothing has changed.",
+  "He wrote the address on the back of his hand.",
+  "We drove past the house where we used to live.",
+  "Please make sure the door is locked before you leave.",
+  "The garden looks different now that the trees are gone.",
+  "I waited for an hour, but the letter never came.",
+  "Well, the plan sounded good when we first discussed it.",
+  "Her coffee had gone cold by the time she remembered it.",
+  "Can you tell me what time the shop closes tonight?",
+  "The dog sat by the gate, waiting for someone.",
+  "It took us three days to drive across the state.",
+  "Everyone agreed to meet again at the end of the month.",
+]
+long = [
+  "Well, after everything that happened last winter, I never thought we would be sitting here together again, talking about the old house and the people who lived there.",
+  "The museum was almost empty that afternoon, so we walked slowly through every room, reading each small card beside the paintings until the guard told us they were closing.",
+  "When the phone finally rang, she let it ring three more times before answering, because she already knew who was calling and what they were going to say.",
+  "He packed the last of the boxes into the car, took one more look at the empty rooms, and then drove away without telling anyone where he was going.",
+  "Oh, I almost forgot to mention that the meeting has been moved to Thursday, and the room on the second floor will not be available until later in the day.",
+  "So, if you follow the river for about a mile and then turn left at the old stone bridge, you will see the cottage just behind the row of tall trees.",
+  "The letters were tied together with a faded blue ribbon, and some of them had been read so many times that the paper had started to tear along the folds.",
+  "We spent most of the summer by the lake, swimming in the mornings and reading on the porch in the afternoons, and nobody ever asked us to be anywhere else.",
+  "I told them that the instructions were clear enough, but somehow the whole thing still ended up in pieces on the floor of the living room by midnight.",
+  "After the storm passed, the streets were covered with branches and leaves, and the neighbors came outside one by one to see how much damage had been done.",
+  "Well, the doctor said it would take a few more weeks before everything returns to normal, so for now we just have to be patient and wait.",
+  "The small bakery on the corner has been closed for years, but every time I walk past it, I can still remember the smell of fresh bread in the morning.",
+  "She kept every ticket from every concert she had ever attended, and the shoebox under her bed was so full that the lid no longer closed properly.",
+  "If the weather stays like this through the weekend, we might cancel the trip to the coast and spend a few quiet days at home instead.",
+  "The last bus leaves the station at a quarter past eleven, so if we miss it, we will have to walk all the way back across town in the dark.",
+  "Nobody could explain why the clock in the hallway had stopped at exactly the same minute every night for the past three weeks.",
+  "He spoke very quietly, as if he was afraid that someone in the next room might hear, and then he handed me an envelope with my name on it.",
+  "Oh, and before you go, could you please take these books back to the library, because they were due last Friday and I keep forgetting about them.",
+  "The children ran across the field toward the water, shouting and laughing, while their parents followed slowly behind them carrying the baskets and blankets.",
+  "So, in the end, we decided to keep the old piano, even though nobody in the family has played it properly since my grandmother passed away.",
+]
+
 [eval.generation]
 # Same for baseline and fine-tuned runs. These mirror speak.py / the model's generation_config
 # (do_sample=true) so the baseline is what the working inference path produces.
