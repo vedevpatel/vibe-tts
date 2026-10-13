@@ -43,9 +43,10 @@ parser.add_argument("--style", help="speak with the Expresso emotion fine-tune i
 args = parser.parse_args()
 sentences = args.sentences or DEFAULT_SENTENCES
 
+RETRIES = 2   # --style only: extra tries for a clip that audio_problem() flags
 model_path, description, gen_kwargs = MODEL_DIR, DESCRIPTION, {}
 if args.style:
-    from expresso_common import Config, read_json
+    from expresso_common import Config, audio_problem, read_json, speaking_pace
 
     if args.compile:
         raise SystemExit("--style uses the float32 settings the fine-tune was evaluated with; --compile is not supported with it")
@@ -60,6 +61,7 @@ if args.style:
     description = info["descriptions"][args.style]   # exactly what it was trained and evaluated with
     g = cfg["eval"]["generation"]
     gen_kwargs = {k: g[k] for k in ("do_sample", "temperature", "max_length", "min_new_tokens")}
+    pace = speaking_pace(cfg)
     print(f"style={args.style}: {cfg['speak']['run']} fine-tune, Expresso speaker {info['speaker']}. Trained on CC BY-NC 4.0 "
           f"data: noncommercial use only, and a synthetic voice of a real person; do not present it as real.")
 
@@ -109,8 +111,15 @@ if compiled:
 
 OUT_DIR.mkdir(exist_ok=True)
 for i, text in enumerate(sentences):
-    start = time.time()
-    audio = synth(text)
     path = OUT_DIR / f"speak_{i}.wav"
-    sf.write(path, audio, model.config.sampling_rate)
+    # With --style, a clip that is cut off, far too short or far too long for its text is generated again (sampling makes
+    # each try different). The fine-tune does this about 1 time in 100 (EXPRESSO.md); the checks need no transcript.
+    for attempt in range(1 + (RETRIES if args.style else 0)):
+        start = time.time()
+        audio = synth(text)
+        sf.write(path, audio, model.config.sampling_rate)
+        problem = audio_problem(path, text, args.style, pace) if args.style else None
+        if not problem:
+            break
+        print(f"{path.name}: {problem[1]}; " + ("generating again" if attempt < RETRIES else f"kept after {RETRIES} retries"))
     print(f"{path.name}: {len(audio) / model.config.sampling_rate:.2f}s audio in {time.time() - start:.1f}s  <- {text!r}")
