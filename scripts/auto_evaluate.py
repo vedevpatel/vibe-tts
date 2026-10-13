@@ -32,7 +32,8 @@ from collections import defaultdict
 from pathlib import Path
 
 from _common import model_root, pick_device  # first: loads .env before transformers reads HF_HOME
-from expresso_common import Config, log, parse_stem, read_json, sha256_file, strip_emphasis_markers, utc_now, write_json
+from expresso_common import (CUT_OFF_DB, TOO_LONG, TOO_SHORT, Config, audio_problem, log, parse_stem, read_json, sha256_file,
+                             speaking_pace, strip_emphasis_markers, utc_now, write_json)
 
 SR = 16000
 # (repo, pinned revision, files, license). Nothing here is Chinese-developed (see EXPRESSO.md).
@@ -241,18 +242,6 @@ def trailing_missing(ref, hyp):
         else:
             j -= 1
     return max(0, n - m)
-
-
-def end_gap_db(path):
-    """How far the last 100 ms sit below the clip's own speech level. Speech ends in silence (real recordings: 36 dB or
-    more); a clip cut off mid-word ends loud (emotion-v2's two cut-offs: 3-5 dB)."""
-    import numpy as np
-    import soundfile as sf
-    from expresso_common import analyze_audio
-
-    audio, sr = sf.read(str(path), dtype="float32", always_2d=True)
-    tail = audio.mean(axis=1)[-int(0.1 * sr):]
-    return analyze_audio(path)["speech_level_dbfs"] - 20 * np.log10(np.sqrt(np.mean(tail ** 2)) + 1e-9)
 
 
 # ---------------------------------------------------------------- real-recording sets
@@ -517,25 +506,19 @@ def cmd_score(cfg, args):
 
 
 # ---------------------------------------------------------------- completeness
-TOO_SHORT = 0.5        # a clip under half the time this speaker needs to say the text cannot hold all of it
-TOO_LONG = 2.5         # over 2.5x (plus 1 s) suggests babbling or a long silent tail
 GARBLED_WER = 0.25     # complete but with a quarter of the words wrong: worth a listen
-CUT_OFF_DB = 15.0      # ending less than this far below the speech level = cut off mid-word (see end_gap_db)
 
 
-def completeness_flags(ref, hyp, text, style, duration, pace, end_gap):
-    """('incomplete' | 'check' | None, detail). pace: this speaker's characters per second of speech, per style."""
+def completeness_flags(ref, hyp, path, text, style, pace):
+    """('incomplete' | 'check' | None, detail): the transcript checks here, plus the audio-only ones shared with
+    speak.py (expresso_common.audio_problem). pace: speaking_pace(cfg)."""
     miss = trailing_missing(ref, hyp)
-    expected = len(strip_emphasis_markers(text)) / pace[style]
-    wer = word_errors(ref, hyp) / max(len(ref), 1)
     if miss >= 2 or (miss and miss / len(ref) >= 1 / 3):
         return "incomplete", f"last {miss} of {len(ref)} words missing"
-    if end_gap < CUT_OFF_DB:
-        return "incomplete", f"ends mid-sound (last 100 ms only {end_gap:.0f} dB below the speech level)"
-    if duration < TOO_SHORT * expected:
-        return "incomplete", f"{duration:.2f} s, under half the {expected:.2f} s this text needs"
-    if duration > TOO_LONG * expected + 1.0:
-        return "check", f"{duration:.2f} s, more than {TOO_LONG}x the {expected:.2f} s this text needs"
+    problem = audio_problem(path, text, style, pace)
+    if problem:
+        return ("check" if problem[0] == "too_long" else "incomplete"), problem[1]
+    wer = word_errors(ref, hyp) / max(len(ref), 1)
     if wer >= GARBLED_WER:
         return "check", f"word error rate {wer:.0%}"
     return None, ""
@@ -543,23 +526,21 @@ def completeness_flags(ref, hyp, text, style, duration, pace, end_gap):
 
 def cmd_completeness(cfg, args):
     """Flag generated clips that stop early (or need a listen), after checking the same rule on real recordings."""
-    import soundfile as sf
     from scipy.stats import binomtest
 
     cfg.require_data_root()
     m = Measures(cfg)
-    checks = read_json(cfg.path("processed") / "description_checks.json")["per_style"]
-    pace = {s: v["chars_per_active_s"] for s, v in checks.items()}
+    pace = speaking_pace(cfg)
 
-    def evaluate(path, text, style, duration):
+    def evaluate(path, text, style):
         ref, hyp = m.normalize_text(text), m.transcript(path)
-        flag, detail = completeness_flags(ref, m.normalize_text(hyp), text, style, duration, pace, end_gap_db(path))
+        flag, detail = completeness_flags(ref, m.normalize_text(hyp), path, text, style, pace)
         return {"flag": flag, "detail": detail, "transcript": hyp}
 
     real = speaker_clips(cfg, "validation") + speaker_clips(cfg, "test")
     real_flags = []
     for c in real:
-        r = evaluate(c["path"], c["text"], c["style"], sf.info(str(c["path"])).duration)
+        r = evaluate(c["path"], c["text"], c["style"])
         real_flags.append(r | {"id": c["id"], "text": c["text"]})
     m.save()
 
@@ -573,7 +554,7 @@ def cmd_completeness(cfg, args):
             group = r["item_id"].rstrip("0123456789")
             clips.append({"run": label, "group": group, "style": r["style"], "clip_id": r["clip_id"], "text": r["text"],
                           "duration_s": r["duration_s"], "path": str(d / r["wav"])}
-                         | evaluate(d / r["wav"], r["text"], r["style"], r["duration_s"]))
+                         | evaluate(d / r["wav"], r["text"], r["style"]))
             if i % 20 == 0 or i == len(recs):
                 log(f"{label}: {i}/{len(recs)}")
                 m.save()
@@ -595,7 +576,8 @@ def cmd_completeness(cfg, args):
             lines.append(f"- real `{r['id']}` ({r['flag']}: {r['detail']}): \"{r['text']}\" heard as \"{r['transcript']}\"")
     for label in args.runs:
         cs = [c for c in clips if c["run"] == label]
-        groups = sorted({c["group"] for c in cs}, key=lambda g: ["short", "medium", "long"].index(g) if g in ("short", "medium", "long") else 9)
+        order = ["short", "medium", "long"]
+        groups = sorted({c["group"] for c in cs}, key=lambda g: (order.index(g) if g in order else len(order), g))
         lines += ["", f"## {label}", "", "| length | style | clips | incomplete | to check |", "|---|---|---|---|---|"]
         for g in groups:
             for s in sorted({c["style"] for c in cs}):
