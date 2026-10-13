@@ -1,7 +1,10 @@
 """Synthesize sentences with the local parler-tts-mini-v1 weights (see scripts/download_models.py).
 
-Usage: .venv/bin/python scripts/speak.py [--compile] ["sentence one" "sentence two" ...]
+Usage: .venv/bin/python scripts/speak.py [--compile] [--style default|sad] ["sentence one" "sentence two" ...]
 Writes speak_<n>.wav to the output dir (VIBE_TTS_OUTPUT_DIR, default outputs/). With no sentences, runs a few built-in test sentences.
+
+--style speaks with the Expresso emotion fine-tune instead (one speaker's voice, default or sad delivery; noncommercial,
+see EXPRESSO.md), using the descriptions and generation settings it was evaluated with.
 
 --compile (CUDA only) compiles the forward pass with a static cache. It costs ~30s of
 warm-up per process and pads every input to a fixed length, but runs near real time on
@@ -34,8 +37,31 @@ DEFAULT_SENTENCES = [
 parser = argparse.ArgumentParser()
 parser.add_argument("sentences", nargs="*")
 parser.add_argument("--compile", action="store_true", help="torch.compile with a static cache (CUDA only)")
+parser.add_argument("--style", help="speak with the Expresso emotion fine-tune in this style (default or sad): Expresso "
+                    "speaker ex02's voice, noncommercial use only, see EXPRESSO.md. Which checkpoint: [speak] in "
+                    "configs/expresso_emotion.toml")
 args = parser.parse_args()
 sentences = args.sentences or DEFAULT_SENTENCES
+
+model_path, description, gen_kwargs = MODEL_DIR, DESCRIPTION, {}
+if args.style:
+    from expresso_common import Config, read_json
+
+    if args.compile:
+        raise SystemExit("--style uses the float32 settings the fine-tune was evaluated with; --compile is not supported with it")
+    cfg = Config()
+    cfg.require_data_root()
+    model_path = cfg.path("runs") / cfg["speak"]["run"] / "export"
+    info = read_json(model_path / "export_info.json") if (model_path / "export_info.json").is_file() else None
+    if info is None:
+        raise SystemExit(f"no fine-tuned checkpoint at {model_path} (see EXPRESSO.md)")
+    if args.style not in info.get("descriptions", {}):
+        raise SystemExit(f"style {args.style!r} not available; this checkpoint has {sorted(info.get('descriptions', {}))}")
+    description = info["descriptions"][args.style]   # exactly what it was trained and evaluated with
+    g = cfg["eval"]["generation"]
+    gen_kwargs = {k: g[k] for k in ("do_sample", "temperature", "max_length", "min_new_tokens")}
+    print(f"style={args.style}: {cfg['speak']['run']} fine-tune, Expresso speaker {info['speaker']}. Trained on CC BY-NC 4.0 "
+          f"data: noncommercial use only, and a synthetic voice of a real person; do not present it as real.")
 
 device = pick_device()
 compiled = args.compile
@@ -47,7 +73,7 @@ print(f"device={device} compile={compiled}")
 
 tokenizer = AutoTokenizer.from_pretrained(MODEL_DIR)
 # eager attention: the T5 text encoder has no SDPA support
-model = ParlerTTSForConditionalGeneration.from_pretrained(MODEL_DIR, attn_implementation="eager").to(device, dtype=dtype)
+model = ParlerTTSForConditionalGeneration.from_pretrained(model_path, attn_implementation="eager").to(device, dtype=dtype)
 
 if compiled:
     model.generation_config.cache_implementation = "static"
@@ -60,7 +86,7 @@ if compiled:
     desc_len = 48
     longest = max(len(tokenizer(s).input_ids) for s in sentences)
     prompt_len = max(32, -(-longest // 16) * 16)
-desc = tokenizer(DESCRIPTION, max_length=desc_len, **pad).to(device)
+desc = tokenizer(description, max_length=desc_len, **pad).to(device)
 
 
 def synth(text):
@@ -70,6 +96,7 @@ def synth(text):
         attention_mask=desc.attention_mask,
         prompt_input_ids=prompt.input_ids,
         prompt_attention_mask=prompt.attention_mask,
+        **gen_kwargs,
     )
     return out.cpu().float().numpy().squeeze()
 
