@@ -60,6 +60,10 @@ scripts/run_colab_train.sh                             # Colab GPU: baseline gen
 .venv/bin/python scripts/auto_evaluate.py calibrate    # check the automatic measures on real recordings, once
 .venv/bin/python scripts/auto_evaluate.py score --runs baseline finetuned           # automatic scores, minutes, no listening
 #   add --key <key.json> --ratings <ratings.json> to compare with a listener's ratings of the same clips
+.venv/bin/python scripts/evaluate_emotion.py generate --set robustness --label robustness-<run> --model <checkpoint dir>
+.venv/bin/python scripts/auto_evaluate.py completeness --runs robustness-<run>       # early stops, babbling: flags clips to hear
+
+scripts/run.sh --style default|sad "Text."             # everyday use of the fine-tune ([speak] run in the config)
 .venv/bin/python scripts/evaluate_emotion.py page --runs baseline finetuned --name set-a
 #   listen in the browser, export ratings, then:
 .venv/bin/python scripts/evaluate_emotion.py score --key <key.json> --ratings <ratings.json>
@@ -313,7 +317,7 @@ none Chinese-developed): audEERING `wav2vec2-large-robust-12-ft-emotion-msp-dim`
 | P(sad) | logistic regression on emotion embeddings, trained on ex02's 600 train-split clips | held-out default vs sad: 100% correct | AUC 0.83 for "heard as sad"; **more lenient than the listener** |
 | arousal | the emotion model's own output; no training here | AUC 0.95 (ex02), 0.89 (three other speakers) | AUC 0.65 |
 | speaker similarity | x-vector cosine similarity to ex02's train-split centroid | ex02 0.93 vs other speakers 0.54 (AUC 0.90) | Spearman +0.74 with speaker consistency |
-| WER | Whisper word error rate | 3.2% on real speech | weak (everything is intelligible) |
+| WER | Whisper word error rate | 3.1% on real speech | weak (everything is intelligible) |
 
 A naturalness predictor (torchaudio SQUIM MOS) was tried and dropped: it gave 4.43-4.44 for every clip, including the
 baseline the listener rated 2.5, so it measured nothing.
@@ -377,6 +381,36 @@ Blinded forced choice: the same sentence in both styles, played as A and B in ra
   Naturalness and speaker consistency were not re-rated for v2; the automatic speaker similarity is unchanged from v1.
 - One listener, who had also rated set-b. Another listener would make it stronger.
 
+### emotion-v2 robustness: early stops (120 new sentences, automatic)
+The eval set showed one v2 clip stopping after its first word. To measure how often that happens, v2 spoke 60 new
+sentences (20 short of 2-4 words, 20 medium of 8-11, 20 long of 23-31; several starting "Well," / "Oh," / "So,") in both
+styles on this Mac, with the evaluated checkpoint, descriptions and settings. `auto_evaluate.py completeness` flags a clip
+as incomplete if Whisper's transcript lacks the end of the text, the clip ends mid-sound (its last 100 ms less than 15 dB
+below its own speech level), or it is under half the time ex02 needs for the text. The same rule flags 0 of 152 real
+held-out recordings. Full output: [`results/completeness_emotion-v2.md`](results/completeness_emotion-v2.md).
+
+| | clips | incomplete (stopped early) | complete but worth a listen |
+|---|---|---|---|
+| **v2, new sentences** | 120 | **1** (long, default) | 4 (all short) |
+| v2, eval set | 56 | 1 (the known "Well,") | 0 |
+| v1, eval set | 56 | 0 | 0 |
+| real recordings | 152 | 0 | 6 (Whisper spelling, e.g. "6.45 a.m.") |
+
+- **v2 stops early in about 1% of clips** (2 of 176; 95% CI roughly 0.3-4%), both in the default style (2 of 88) and
+  none of 88 sad. Both end abruptly mid-word (3-5 dB below the speech level, where every complete clip is 21 dB or more).
+  The "Well," start is not the cause: all six sentences beginning "Well," / "Oh," / "So," were complete.
+- **Very short sentences get padding:** 3 of 40 short clips run several seconds long: *"I know."* (both styles: about a
+  second of speech, then seconds of extra sound) and *"Nobody called back."* (2 s of silence first). Medium and long
+  sentences had no such problem.
+- v1 had none in 56 clips, too few to say whether v2 is worse.
+
+### Everyday use
+`scripts/run.sh --style default|sad "Text."` speaks with the checkpoint named in `[speak]` of the config (emotion-v2),
+using the descriptions stored with that checkpoint (`export_info.json`) and the evaluated generation settings. A check of
+3 new sentences per style gave P(sad) 0.00-0.06 for default and 0.94-1.00 for sad, lower arousal for sad in all 3 pairs,
+speaker similarity 0.87-0.97 and exact transcripts. Without `--style`, `run.sh` is unchanged. Expect about 1 clip in 100 to
+stop early and very short inputs to be padded; regenerate if that happens.
+
 ### Listen
 Two blinded pages are ready (open `index.html` in a browser; ratings save automatically in that browser and export as JSON):
 
@@ -393,17 +427,19 @@ answer keys are `outputs/expresso/listening/set-{a,b}.answer_key.json`; do not o
 ```
 
 ### Next steps
-1. Optional: a second listener on `check-1` (5 minutes), or set-a style absolute ratings of v2 for naturalness.
-2. Watch the early-stop failure (one v2 clip of 56 stops after its first word) on more sentences before using v2 widely.
-3. The same recipe (attribute-word descriptions, then `auto_evaluate.py score`, then a `pairs` check) applies to other
-   Expresso styles or speakers.
+1. Optional mitigation in `speak.py --style`: regenerate a clip automatically when it ends mid-sound (the cheap signal
+   that caught both early stops, no Whisper needed).
+2. More styles (happy, whisper, ...) with v2 kept as the working baseline: attribute-word descriptions, a new run,
+   `auto_evaluate.py score` and `completeness`, then a `pairs` check by ear for each style.
+3. Optional: a second listener on `check-1`, and absolute naturalness ratings of v2.
 
 ### Artifacts
 | what | where | notes |
 |---|---|---|
 | fine-tuned checkpoint (step 148) | `data/expresso/runs/emotion-v1/export/` | sha256 verified; carries `NONCOMMERCIAL_NOTICE.md`; **not published** |
 | emotion-v2 checkpoint (step 148) | `data/expresso/runs/emotion-v2/export/` | same; v2 descriptions |
-| automatic scores | `outputs/expresso/auto/` (per-clip JSON, cache), summaries in `results/auto_*.md` | |
+| automatic scores | `outputs/expresso/auto/` (per-clip JSON, cache), summaries in `results/auto_*.md`, `results/completeness_*.md` | |
+| robustness batch (v2) | `outputs/expresso/runs/robustness-finetuned-emotion-v2/` | 120 clips |
 | training record | `data/expresso/runs/emotion-v1/{train_config.json,environment.json,train.log}` | |
 | generated audio + metadata | `outputs/expresso/runs/{baseline,finetuned}/` (v1), `{baseline,finetuned}-emotion-v2/` | raw float32 WAVs + `metadata.jsonl` |
 | measurements | `outputs/expresso/measurements.md` | |
