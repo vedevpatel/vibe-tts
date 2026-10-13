@@ -206,6 +206,47 @@ def analyze_audio(path, clip_level=0.999):
     return rec
 
 
+# Signs of a broken generation that need no transcript. auto_evaluate.py completeness uses them with Whisper's, speak.py
+# --style to regenerate. On real recordings they flag 0 of 152; they caught both of emotion-v2's early stops (EXPRESSO.md).
+CUT_OFF_DB = 15.0   # ending less than this far below the clip's speech level = cut off mid-word
+TOO_SHORT = 0.5     # under half the time this speaker needs for the text cannot hold all of it
+TOO_LONG = 2.5      # over 2.5x that time (plus 1 s): babbling or a long silent stretch
+
+
+def end_gap_db(path):
+    """How far the last 100 ms sit below the clip's own speech level. Speech ends in silence (real recordings: 36 dB or
+    more); a clip cut off mid-word ends loud (emotion-v2's two cut-offs: 3-5 dB)."""
+    import numpy as np
+    import soundfile as sf
+
+    audio, sr = sf.read(str(path), dtype="float32", always_2d=True)
+    tail = audio.mean(axis=1)[-int(0.1 * sr):]
+    return analyze_audio(path)["speech_level_dbfs"] - 20 * np.log10(np.sqrt(np.mean(tail ** 2)) + 1e-9)
+
+
+def speaking_pace(cfg):
+    """The speaker's characters per second of speech, per style, from the prepared recordings."""
+    checks = read_json(cfg.path("processed") / "description_checks.json")["per_style"]
+    return {s: v["chars_per_active_s"] for s, v in checks.items()}
+
+
+def audio_problem(path, text, style, pace):
+    """(kind, detail) if a clip of this speaker looks broken without listening, else None. kind is 'cut_off',
+    'too_short' or 'too_long' for its text. `pace` is speaking_pace(cfg)."""
+    import soundfile as sf
+
+    duration = sf.info(str(path)).duration
+    expected = len(strip_emphasis_markers(text)) / pace[style]
+    gap = end_gap_db(path)
+    if gap < CUT_OFF_DB:
+        return "cut_off", f"ends mid-sound (last 100 ms at {-gap:+.0f} dB against its speech level; finished speech ends 20+ dB below)"
+    if duration < TOO_SHORT * expected:
+        return "too_short", f"{duration:.2f} s, under {TOO_SHORT}x the {expected:.2f} s this text needs"
+    if duration > TOO_LONG * expected + 1.0:
+        return "too_long", f"{duration:.2f} s, more than {TOO_LONG}x the {expected:.2f} s this text needs"
+    return None
+
+
 def description_for(cfg, speaker, style):
     """Conditioning description. Identical structure for every style; only the style phrase differs."""
     d = cfg["description"]
