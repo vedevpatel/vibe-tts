@@ -6,10 +6,10 @@ while staying natural, intelligible and sounding like the same speaker?
 
 **Status.** Two checkpoints have been trained. **emotion-v1** moved the voice to the target speaker but its sad delivery
 was too weak to hear (one listener, set-b: 2 of 13 sad clips heard as sad). **emotion-v2** changed only the descriptions, to
-words the base model already understands, and on every automatic measure its two styles now differ about as much as the
-real recordings do (sad version scores sadder for 28 of 28 same-sentence pairs; arousal gap 0.13 against 0.14 for real
-speech) while keeping the speaker's voice. That is not yet confirmed by ear: a 22-pair, about 5-minute "which one sounds
-sadder?" page is ready (`outputs/expresso/listening/check-1/`). See [Results](#results).
+words the base model already understands. Its two styles now differ about as much as the real recordings do on every
+automatic measure, and **by ear**: in a blinded "which one sounds sadder?" check, one listener picked v2's sad version in
+13 of 14 same-sentence pairs (0 the default, 1 "cannot tell"; p = 0.001 against guessing) and the real sad recording in
+8 of 8. One listener and 14 pairs: a clear result, not a large study. See [Results](#results).
 
 ## License: CC BY-NC 4.0, noncommercial
 
@@ -358,7 +358,24 @@ Full output: [`results/auto_score_emotion-v2.md`](results/auto_score_emotion-v2.
   which is most of v2's 5.8% default word error rate. v1 had none under 1 s. Too few clips to say whether this is a
   real regression.
 - These are automatic measures. They were checked on real recordings and against one listener, and they are more
-  lenient than that listener was, so v2 still has to be confirmed by ear.
+  lenient than that listener was, so v2 was then checked by ear (below).
+
+### Listening check of emotion-v2 (check-1: 22 pairs, one listener)
+Blinded forced choice: the same sentence in both styles, played as A and B in random order, "which one sounds sadder?".
+14 pairs from v2 (seed 11) and 8 pairs of real recordings as a check. Answers in
+[`results/pairs_check-1.json`](results/pairs_check-1.json), score in [`results/score_check-1.md`](results/score_check-1.md).
+
+| | pairs | picked the sad version | picked the default version | cannot tell |
+|---|---|---|---|---|
+| **fine-tuned v2** | 14 | **93%** (13) | 0% | 7% (1) |
+| real recordings | 8 | 100% (8) | 0% | 0% |
+
+- **The v2 sad delivery is audible.** 13 of 14 is very unlikely by guessing (p = 0.001, one-sided binomial, the
+  "cannot tell" counted as a miss). The one tie was *"The package arrived on Tuesday afternoon."*
+- This is a relative judgement (which of two is sadder), easier than set-b's absolute one (does this clip sound sad).
+  It shows the two styles are told apart in the right direction, not how sad v2's sad clips sound on their own.
+  Naturalness and speaker consistency were not re-rated for v2; the automatic speaker similarity is unchanged from v1.
+- One listener, who had also rated set-b. Another listener would make it stronger.
 
 ### Listen
 Two blinded pages are ready (open `index.html` in a browser; ratings save automatically in that browser and export as JSON):
@@ -376,11 +393,10 @@ answer keys are `outputs/expresso/listening/set-{a,b}.answer_key.json`; do not o
 ```
 
 ### Next steps
-1. Listen to `outputs/expresso/listening/check-1/index.html` (22 pairs, about 5 minutes: same sentence in both styles,
-   "which one sounds sadder?", 8 of them real recordings as a check), download the answers, and score them:
-   `evaluate_emotion.py score --key outputs/expresso/listening/check-1.answer_key.json --ratings ~/Downloads/pairs_check-1.json`.
-2. If v2 is heard as sadder: watch the early-stop failure (one clip of 56) on more sentences.
-3. If not: more style-focused training (epochs, learning rate) or more sad data, screened with `auto_evaluate.py score`.
+1. Optional: a second listener on `check-1` (5 minutes), or set-a style absolute ratings of v2 for naturalness.
+2. Watch the early-stop failure (one v2 clip of 56 stops after its first word) on more sentences before using v2 widely.
+3. The same recipe (attribute-word descriptions, then `auto_evaluate.py score`, then a `pairs` check) applies to other
+   Expresso styles or speakers.
 
 ### Artifacts
 | what | where | notes |
