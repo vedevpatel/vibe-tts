@@ -408,8 +408,14 @@ held-out recordings. Full output: [`results/completeness_emotion-v2.md`](results
 `scripts/run.sh --style default|sad "Text."` speaks with the checkpoint named in `[speak]` of the config (emotion-v2),
 using the descriptions stored with that checkpoint (`export_info.json`) and the evaluated generation settings. A check of
 3 new sentences per style gave P(sad) 0.00-0.06 for default and 0.94-1.00 for sad, lower arousal for sad in all 3 pairs,
-speaker similarity 0.87-0.97 and exact transcripts. Without `--style`, `run.sh` is unchanged. Expect about 1 clip in 100 to
-stop early and very short inputs to be padded; regenerate if that happens.
+speaker similarity 0.87-0.97 and exact transcripts. Without `--style`, `run.sh` is unchanged.
+
+With `--style`, a clip that is cut off mid-sound, under half or over 2.5x (plus 1 s) the time ex02 needs for its text is
+generated again, up to twice, and the reason is printed. These are the audio-only checks of `completeness`
+(`expresso_common.audio_problem`, no Whisper): they flag none of the 152 real recordings and none of v1's 56 clips, and
+they catch all five problem clips above (both cut-offs and the three padded short ones). In a first try, 1 of 8 short
+clips was regenerated (it ended in a burst 15 dB louder than its speech) and the second attempt was clean. A wrong
+word in the middle of a clip is not caught: that would need Whisper.
 
 ### Listen
 Two blinded pages are ready (open `index.html` in a browser; ratings save automatically in that browser and export as JSON):
@@ -427,11 +433,10 @@ answer keys are `outputs/expresso/listening/set-{a,b}.answer_key.json`; do not o
 ```
 
 ### Next steps
-1. Optional mitigation in `speak.py --style`: regenerate a clip automatically when it ends mid-sound (the cheap signal
-   that caught both early stops, no Whisper needed).
-2. More styles (happy, whisper, ...) with v2 kept as the working baseline: attribute-word descriptions, a new run,
-   `auto_evaluate.py score` and `completeness`, then a `pairs` check by ear for each style.
-3. Optional: a second listener on `check-1`, and absolute naturalness ratings of v2.
+1. More styles (happy, whisper, ...) with v2 kept as the working baseline: attribute-word descriptions, a new run,
+   `auto_evaluate.py score` and `completeness`, then a `pairs` check by ear for each style. Start with one (happy).
+2. Optional: a second listener on `check-1`, absolute naturalness ratings of v2, and the robustness batch for v1 (is
+   v2's 1% early-stop rate new?).
 
 ### Artifacts
 | what | where | notes |
