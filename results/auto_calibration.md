@@ -15,7 +15,7 @@ AUC: 0.5 = no better than chance, 1.0 = perfect separation.
 | low dominance | other speakers default vs sad, AUC | 0.901 |
 | speaker similarity | held-out ex02 vs other speakers, AUC | 0.895 |
 | speaker similarity | median: held-out ex02 / other speakers | 0.925 / 0.544 |
-| word error rate | held-out real recordings | 3.2% |
+| word error rate | held-out real recordings | 3.1% |
 
 Held-out real recordings by style:
 
