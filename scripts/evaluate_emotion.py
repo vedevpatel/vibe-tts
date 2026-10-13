@@ -10,6 +10,7 @@ Subcommands (all read configs/expresso_emotion.toml; run from any directory):
             (the ones the model was trained with):
               evaluate_emotion.py generate --label baseline
               evaluate_emotion.py generate --label finetuned --model <checkpoint dir>
+            --set robustness uses the config's larger [robustness] sentence batch instead (early-stop checks).
             Raw 32-bit float WAVs and metadata.jsonl go to <output dir>/expresso/runs/<label>/.
   page      Build a blinded listening page (opaque shuffled clip labels) from generated runs, plus the
             real held-out recordings as hidden controls. The answer key is written NEXT TO the page
@@ -62,6 +63,21 @@ def all_release_transcripts(cfg):
     from expresso_common import load_transcripts
 
     return {normalize_transcript(t) for t in load_transcripts(cfg.path("raw")).values()}
+
+
+def robustness_set(cfg):
+    """The [robustness] sentences in the eval set's shape. Item ids carry the length group (short03, long11)."""
+    r = cfg["robustness"]
+    release = all_release_transcripts(cfg)
+    items = []
+    for group in ("short", "medium", "long"):
+        for i, text in enumerate(r[group]):
+            if normalize_transcript(text) in release:
+                raise SystemExit(f"robustness sentence {text!r} occurs in the dataset transcripts; replace it in the config")
+            items.append({"item_id": f"{group}{i:02d}", "source": "robustness", "text": text, "reference_examples": {}})
+    speaker, styles = cfg.speaker(), cfg["speaker"]["styles"]
+    return {"speaker": speaker, "styles": styles, "seeds": r["seeds"], "items": items,
+            "descriptions": {s: description_for(cfg, speaker, s) for s in styles}}
 
 
 # ---------------------------------------------------------------- select
@@ -120,9 +136,12 @@ def cmd_generate(cfg, args):
     if not hasattr(StaticCache, "max_batch_size"):
         StaticCache.max_batch_size = property(lambda self: self.batch_size)
 
-    if not eval_set_path(cfg).is_file():
-        raise SystemExit(f"{eval_set_path(cfg)} missing: run `evaluate_emotion.py select` first")
-    es = read_json(eval_set_path(cfg))
+    if args.set == "robustness":
+        es = robustness_set(cfg)
+    else:
+        if not eval_set_path(cfg).is_file():
+            raise SystemExit(f"{eval_set_path(cfg)} missing: run `evaluate_emotion.py select` first")
+        es = read_json(eval_set_path(cfg))
     gen = cfg["eval"]["generation"]
     base_dir = model_dir(cfg["training"]["base_model"])
     model_path = Path(args.model).expanduser().resolve() if args.model else base_dir
@@ -603,6 +622,8 @@ def main():
     g = sub.add_parser("generate", help="synthesize the evaluation set with one model")
     g.add_argument("--label", required=True, help="run name, e.g. baseline or finetuned")
     g.add_argument("--model", help="checkpoint directory (default: the unchanged base model)")
+    g.add_argument("--set", choices=["eval", "robustness"], default="eval",
+                   help="the frozen evaluation set (default) or the config's [robustness] sentences")
     g.add_argument("--limit", type=int, help="only the first N clips (smoke test)")
     g.add_argument("--no-hash", action="store_true", help="skip hashing the weights (metadata then has no weights_sha256)")
     p = sub.add_parser("page", help="build the blinded listening page")
