@@ -28,6 +28,7 @@ pinned dependencies for your platform, checks out the pinned `parler-tts` source
 ```
 scripts/run.sh                          # built-in test sentences, then play them
 scripts/run.sh "Say this." "And this."  # your own text (NOPLAY=1 to skip playback)
+scripts/run.sh --style sad "Say this."  # the Expresso emotion fine-tune: default or sad (noncommercial, see below)
 ```
 
 Audio is written to `outputs/`. Per-machine settings (model location, output location, device)
@@ -49,7 +50,9 @@ model provenance, and how to bump dependencies. Upstream code lives in `third_pa
 ## Expresso emotion fine-tuning (experimental, noncommercial)
 
 A one-speaker fine-tune of Parler-TTS on Expresso's default and sad read speech, with a blinded
-before/after listening test. Separate from everyday use above; nothing here changes `run.sh` or
-`run_colab.sh`. The dataset is CC BY-NC 4.0, so any checkpoint trained on it is noncommercial.
+before/after listening test. `run.sh --style default|sad` speaks with it (the checkpoint must have been
+trained and fetched first; it lives with the experiment data); without `--style`, `run.sh` and
+`run_colab.sh` are unchanged. The dataset is CC BY-NC 4.0, so any checkpoint trained on it is
+noncommercial, and the voice is a synthetic copy of a real speaker: do not present it as real.
 See [EXPRESSO.md](EXPRESSO.md) for the workflow, provenance and results.
 
