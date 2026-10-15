@@ -80,6 +80,31 @@ def robustness_set(cfg):
             "descriptions": {s: description_for(cfg, speaker, s) for s in styles}}
 
 
+def extend_eval_set(cfg, styles):
+    """Add the config's new styles to the frozen eval set: the same items and seeds, so every model is compared on the same
+    sentences. Each test item gains the real recording of its sentence in the new style, if the test split has one."""
+    es = read_json(eval_set_path(cfg))
+    new = [s for s in styles if s not in es["styles"]]
+    if not new:
+        raise SystemExit(f"nothing to extend: the eval set already has {es['styles']}")
+    by_text = defaultdict(dict)
+    for ex in load_jsonl(cfg.path("splits") / "test.jsonl"):
+        by_text[normalize_transcript(ex["text"])].setdefault(ex["style"], ex["id"])
+    found = 0
+    for it in es["items"]:
+        if it["source"] == "test":
+            for s in new:
+                if s in by_text[normalize_transcript(it["text"])]:
+                    it["reference_examples"][s] = by_text[normalize_transcript(it["text"])][s]
+                    found += 1
+    es["styles"] = es["styles"] + new
+    es["descriptions"].update({s: description_for(cfg, es["speaker"], s) for s in new})
+    es.setdefault("extensions", []).append({"at": utc_now(), "added_styles": new, "reference_examples_found": found})
+    write_json(eval_set_path(cfg), es)
+    n_test = sum(it["source"] == "test" for it in es["items"])
+    log(f"eval set now {es['styles']}; {found} of {n_test * len(new)} test items have a real {'/'.join(new)} recording")
+
+
 # ---------------------------------------------------------------- select
 def cmd_select(cfg, args):
     ev = cfg["eval"]
@@ -87,9 +112,12 @@ def cmd_select(cfg, args):
     test_path = cfg.path("splits") / "test.jsonl"
     if not test_path.is_file():
         raise SystemExit(f"{test_path} not found: run scripts/prepare_expresso.py first")
-    if eval_set_path(cfg).is_file() and not args.force:
-        raise SystemExit(f"{eval_set_path(cfg)} already exists (the evaluation set is frozen). Use --force only to start a new experiment.")
     styles = cfg["speaker"]["styles"]
+    if args.extend:
+        return extend_eval_set(cfg, styles)
+    if eval_set_path(cfg).is_file() and not args.force:
+        raise SystemExit(f"{eval_set_path(cfg)} already exists (the evaluation set is frozen). Use --force only to start a new experiment, "
+                         "or --extend to add the config's new styles to it.")
     by_text = defaultdict(dict)
     for ex in load_jsonl(test_path):
         by_text[normalize_transcript(ex["text"])].setdefault(ex["style"], ex)
@@ -619,6 +647,7 @@ def main():
     sub = ap.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("select", help="freeze the evaluation set")
     s.add_argument("--force", action="store_true")
+    s.add_argument("--extend", action="store_true", help="add the config's new styles to the frozen eval set (same items and seeds)")
     g = sub.add_parser("generate", help="synthesize the evaluation set with one model")
     g.add_argument("--label", required=True, help="run name, e.g. baseline or finetuned")
     g.add_argument("--model", help="checkpoint directory (default: the unchanged base model)")
