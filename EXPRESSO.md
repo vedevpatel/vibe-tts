@@ -51,6 +51,8 @@ scripts/setup_train.sh                                 # isolated training env (
 .venv/bin/python scripts/inventory_expresso.py         # inventory, speaker choice, acoustic checks, listening pack
 .venv/bin/python scripts/prepare_expresso.py           # resample, gate, descriptions, grouped splits, verification
 .venv/bin/python scripts/evaluate_emotion.py select    # freeze the evaluation set
+#   adding a style later (emotion-v3: whisper): list it in [speaker] styles, then
+#   prepare_expresso.py --extend and evaluate_emotion.py select --extend (existing data, splits and eval items unchanged)
 scripts/run_colab_train.sh                             # Colab GPU: baseline generation, fine-tune, fine-tuned generation
 #   (--smoke checks the whole pipeline in a few minutes first; --keep-vm-on-failure keeps the VM if a late step fails)
 #   --run NAME labels the audio baseline-NAME / finetuned-NAME (emotion-v1 keeps the plain baseline / finetuned)
@@ -114,11 +116,22 @@ emotion-v2 (current config):
 - default: *"Expresso speaker ex02 delivers an expressive and animated speech with a moderate speed and pitch. The recording is clear with little background noise."*
 - sad: *"Expresso speaker ex02 delivers a sad, monotone speech, speaking slowly with a low pitch. The recording is clear with little background noise."*
 
+emotion-v3 (current config) keeps both texts exactly and adds:
+- whisper: *"Expresso speaker ex02 whispers in a soft, breathy voice with no pitch, at a moderate speed. The recording is fairly clear, with some background noise."*
+
 Why v2: the unchanged model did not respond to "sad" at all (set-b), while "expressive and animated", "monotone", speed
 and pitch are the attribute words Parler-TTS Mini was trained on. Every v2 claim holds for ex02, sad relative to default
 (table below): F0 range 6.1 vs 11.3 semitones (monotone vs expressive), F0 median 223 vs 248 Hz (low pitch), pace 16.4 vs
 19.6 characters per active second (slowly). "Animated" for default is what a listener heard in the real recordings (set-b).
 The v1 rows of the table remain as they were.
+
+Whisper claims, from `prepare_expresso.py --extend` (377 of 380 clips accepted, 3 too short): pitch found in 9% of frames
+against 67% for default (no pitch); speech level -22.8 vs -19.7 dBFS (soft); pace 19.3 vs 19.6 characters per active second
+(moderate speed, as default); noise floor median -49.4 dBFS, above the -55 limit for "little background noise" but 26.6 dB
+below the speech (hence "fairly clear, with some background noise" instead of the shared sentence); "breathy" is
+perceptual and not measured. Whisper clips joined the split their sentence was already in (301 / 38 / 38, the same shares
+as default and sad); the 752 existing examples, their audio and all 76 frozen test rows are unchanged
+(`splits/FROZEN.json` records the extension).
 
 | claim | verdict | evidence (ex02, medians) |
 |---|---|---|
