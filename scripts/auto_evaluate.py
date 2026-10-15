@@ -4,9 +4,10 @@ Subcommands (all read configs/expresso_emotion.toml; run from any directory):
 
   download   Fetch the pinned evaluation models (EVAL_MODELS) into <model dir>/eval/.
   calibrate  Check every measure on REAL recordings only, before it is used on synthetic audio:
-               sadness  a default-vs-sad classifier (logistic regression on audEERING emotion embeddings),
-                        trained on the speaker's train split and tested on validation + test; plus the
-                        emotion model's own arousal and valence, which need no training
+               style    a classifier over the configured styles (logistic regression on audEERING emotion
+                        embeddings), trained on the speaker's train split and tested on validation + test;
+                        plus one cue per style that needs no training (STYLE_CUES: low arousal for sad,
+                        little voicing for whisper), checked on the other speakers too
                speaker  WavLM x-vector cosine similarity to the speaker's train-split centroid: held-out
                         recordings of the speaker against recordings of the other Expresso speakers
                words    Whisper word error rate on held-out recordings (what real speech scores)
@@ -200,6 +201,16 @@ class Measures:
             return proc.batch_decode(ids, skip_special_tokens=True)[0].strip()
         return self._cached("transcript", path, run)
 
+    def voicing(self, path):
+        """Share of 16 ms frames with a detectable pitch (pyin, the same settings as the inventory and the description
+        checks). Real ex02: default 67%, whisper 9%."""
+        def run(audio):
+            import librosa
+
+            _, voiced, _ = librosa.pyin(audio, fmin=65, fmax=500, sr=SR, frame_length=1024, hop_length=256)
+            return float(voiced.mean())
+        return self._cached("voicing", path, run)
+
     def normalize_text(self, text):
         """Whisper's English normalizer (case, punctuation, spelling variants, numbers), as words."""
         if "normalizer" not in self.models:
@@ -253,12 +264,12 @@ def speaker_clips(cfg, split):
 def other_speaker_clips(cfg, speaker, styles):
     """A fixed, seeded sample of the other speakers' plain read recordings (no emphasis/essentials sub-corpora)."""
     read = cfg.path("raw") / "expresso" / "audio_48khz" / "read"
-    rng = random.Random(cfg["eval"]["seed"])
     out = []
     for spk_dir in sorted(p for p in read.iterdir() if p.is_dir() and p.name != speaker and not p.name.startswith(".")):
         for style in styles:
             cands = sorted(p for p in (spk_dir / style / "base").glob("*.wav")
                            if not p.name.startswith(".") and (parse_stem(p.stem) or {}).get("substyle") is None)
+            rng = random.Random(f"{cfg['eval']['seed']}-{spk_dir.name}-{style}")   # adding a style leaves the others' samples alone
             for p in rng.sample(cands, min(OTHER_SPEAKER_CLIPS, len(cands))):
                 out.append({"path": p, "style": style, "speaker": spk_dir.name, "id": p.stem})
     if not out:
@@ -267,6 +278,16 @@ def other_speaker_clips(cfg, speaker, styles):
 
 
 # ---------------------------------------------------------------- calibrate
+# One speaker-independent cue per style (needs no training), next to the speaker-specific classifier: the direction in
+# which the style differs from default. Styles without an entry are judged by the classifier alone.
+STYLE_CUES = {"sad": ("arousal", -1), "whisper": ("voicing", -1)}
+
+
+def cue_score(clip, style):
+    name, sign = STYLE_CUES[style]
+    return sign * clip[name]
+
+
 def cmd_calibrate(cfg, args):
     import numpy as np
     from sklearn.linear_model import LogisticRegressionCV
@@ -276,8 +297,8 @@ def cmd_calibrate(cfg, args):
 
     cfg.require_data_root()
     speaker, styles = cfg.speaker(), cfg["speaker"]["styles"]
-    if styles != ["default", "sad"]:
-        raise SystemExit(f"calibrate assumes styles default and sad, config has {styles}")
+    if styles[0] != "default":
+        raise SystemExit(f"calibrate compares every style with 'default', which must come first; config has {styles}")
     m = Measures(cfg)
     train, held = speaker_clips(cfg, "train"), speaker_clips(cfg, "validation") + speaker_clips(cfg, "test")
     others = other_speaker_clips(cfg, speaker, styles)
@@ -292,80 +313,93 @@ def cmd_calibrate(cfg, args):
         return out
 
     em_train = progress(train, "emotion, train split", m.emotion)
-    em_held = progress(held, "emotion, held-out", m.emotion)
-    em_other = progress(others, "emotion, other speakers", m.emotion)
+    for clips, what in ((held, "held-out"), (others, "other speakers")):
+        for c, e in zip(clips, progress(clips, f"emotion, {what}", m.emotion)):
+            c.update({d: e[d] for d in ("arousal", "valence", "dominance")}, embedding=e["embedding"])
+        for c, v in zip(clips, progress(clips, f"voicing, {what}", m.voicing)):
+            c["voicing"] = v
+        for c, x in zip(clips, progress(clips, f"x-vector, {what}", m.xvector)):
+            c["xvector"] = x
     xv_train = progress(train, "x-vector, train split", m.xvector)
-    xv_held = progress(held, "x-vector, held-out", m.xvector)
-    xv_other = progress(others, "x-vector, other speakers", m.xvector)
     tr_held = progress(held, "transcripts, held-out", m.transcript)
 
-    # sadness classifier: speaker-specific, real recordings only
-    y_train = np.array([c["style"] == "sad" for c in train])
-    y_held = np.array([c["style"] == "sad" for c in held])
+    # style classifier: speaker-specific, real recordings only
     clf = make_pipeline(StandardScaler(), LogisticRegressionCV(Cs=10, cv=5, max_iter=5000))
-    clf.fit(np.stack([e["embedding"] for e in em_train]), y_train)
-    p_held = clf.predict_proba(np.stack([e["embedding"] for e in em_held]))[:, 1]
-    acc = float(((p_held >= 0.5) == y_held).mean())
-    auc_clf = float(roc_auc_score(y_held, p_held))
-
-    def auc_low(recs, ys, dim):  # how well a LOW value of an emotion dimension picks out sad clips
-        return float(roc_auc_score(ys, [-r[dim] for r in recs]))
-
-    dims = [d for d in ("arousal", "valence", "dominance") if d in em_held[0]]
-    y_other = np.array([c["style"] == "sad" for c in others])
+    clf.fit(np.stack([e["embedding"] for e in em_train]), [c["style"] for c in train])
+    classes = list(clf.classes_)
+    probs = clf.predict_proba(np.stack([c["embedding"] for c in held]))
+    for c, p in zip(held, probs):
+        c["p"] = dict(zip(classes, map(float, p)))
+    confusion = {s: {t: float(np.mean([max(c["p"], key=c["p"].get) == t for c in held if c["style"] == s])) for t in classes}
+                 for s in styles}
+    record_styles = {}
+    for s in styles[1:]:
+        pair = [c for c in held if c["style"] in ("default", s)]
+        rec = {"classifier_auc": float(roc_auc_score([c["style"] == s for c in pair], [c["p"][s] for c in pair]))}
+        if s in STYLE_CUES:
+            other = [c for c in others if c["style"] in ("default", s)]
+            rec["cue"] = STYLE_CUES[s][0]
+            rec["cue_auc_held_out"] = float(roc_auc_score([c["style"] == s for c in pair], [cue_score(c, s) for c in pair]))
+            rec["cue_auc_other_speakers"] = float(roc_auc_score([c["style"] == s for c in other], [cue_score(c, s) for c in other]))
+        record_styles[s] = rec
 
     centroid = np.mean(np.stack(xv_train), axis=0)
     centroid /= np.linalg.norm(centroid)
-    sim_held = [float(v @ centroid) for v in xv_held]
-    sim_other = [float(v @ centroid) for v in xv_other]
+    sim_held = [float(c["xvector"] @ centroid) for c in held]
+    sim_other = [float(c["xvector"] @ centroid) for c in others]
     auc_spk = float(roc_auc_score([1] * len(sim_held) + [0] * len(sim_other), sim_held + sim_other))
 
-    errs = words = 0
-    for c, hyp in zip(held, tr_held):
-        ref = m.normalize_text(c["text"])
-        errs += word_errors(ref, m.normalize_text(hyp))
-        words += len(ref)
+    wer = {}
+    for s in styles:
+        errs = words = 0
+        for c, hyp in zip(held, tr_held):
+            if c["style"] == s:
+                ref = m.normalize_text(c["text"])
+                errs += word_errors(ref, m.normalize_text(hyp))
+                words += len(ref)
+        wer[s] = errs / words
     m.save()
 
+    by_style = {s: {"classified_as": confusion[s],
+                    **{d: statistics.median([c[d] for c in held if c["style"] == s]) for d in ("arousal", "valence", "dominance", "voicing")},
+                    "speaker_similarity": statistics.median([v for v, c in zip(sim_held, held) if c["style"] == s]),
+                    "wer": wer[s]} for s in styles}
     record = {
-        "created_at": utc_now(), "speaker": speaker,
+        "created_at": utc_now(), "speaker": speaker, "styles": styles, "classes": classes,
         "models": {k: {"repo": v[0], "revision": v[1], "license": v[3]} for k, v in EVAL_MODELS.items()},
         "n": {"train": len(train), "held_out": len(held), "other_speakers": len(others)},
-        "sadness_classifier": {"held_out_accuracy": acc, "held_out_auc": auc_clf, "C": float(clf[-1].C_[0])},
-        "low_dimension_auc": {"held_out": {d: auc_low(em_held, y_held, d) for d in dims},
-                              "other_speakers": {d: auc_low(em_other, y_other, d) for d in dims}},
-        "speaker_similarity": {"held_out_median": statistics.median(sim_held), "other_speakers_median": statistics.median(sim_other),
-                               "held_out_min": min(sim_held), "other_speakers_max": max(sim_other), "auc": auc_spk},
-        "held_out_wer": errs / words,
-        "held_out_by_style": {s: {"p_sad_mean": float(np.mean([p for p, c in zip(p_held, held) if c["style"] == s])),
-                                  **{d: statistics.median([e[d] for e, c in zip(em_held, held) if c["style"] == s]) for d in dims}}
-                              for s in styles},
+        "classifier": {"held_out_accuracy": float(np.mean([max(c["p"], key=c["p"].get) == c["style"] for c in held])), "C": clf[-1].C_.tolist()},
+        "styles_vs_default": record_styles,
+        "speaker_similarity": {"held_out_median": statistics.median(sim_held), "other_speakers_median": statistics.median(sim_other), "auc": auc_spk},
+        "held_out_by_style": by_style,
     }
     out = auto_dir(cfg)
     out.mkdir(parents=True, exist_ok=True)
     (out / "style_classifier.pkl").write_bytes(pickle.dumps({"pipeline": clf, "centroid": centroid, "record": record}))
     write_json(out / "calibration.json", record)
 
-    c, ld, ss = record["sadness_classifier"], record["low_dimension_auc"], record["speaker_similarity"]
-    lines = [
-        f"# Automatic measures: calibration on real recordings ({speaker})", "",
-        f"Train split {len(train)} clips; held-out (validation + test) {len(held)} clips; other Expresso speakers {len(others)} clips.",
-        "AUC: 0.5 = no better than chance, 1.0 = perfect separation.", "",
-        "| measure | check | result |", "|---|---|---|",
-        f"| sadness classifier | held-out default vs sad, accuracy | {c['held_out_accuracy']:.0%} |",
-        f"| sadness classifier | held-out default vs sad, AUC | {c['held_out_auc']:.3f} |",
-    ]
-    for d in dims:
-        lines.append(f"| low {d} | held-out {speaker} default vs sad, AUC | {ld['held_out'][d]:.3f} |")
-        lines.append(f"| low {d} | other speakers default vs sad, AUC | {ld['other_speakers'][d]:.3f} |")
-    lines += [
-        f"| speaker similarity | held-out {speaker} vs other speakers, AUC | {ss['auc']:.3f} |",
-        f"| speaker similarity | median: held-out {speaker} / other speakers | {ss['held_out_median']:.3f} / {ss['other_speakers_median']:.3f} |",
-        f"| word error rate | held-out real recordings | {record['held_out_wer']:.1%} |",
-        "", "Held-out real recordings by style:", "",
-        "| style | mean P(sad) | " + " | ".join(f"median {d}" for d in dims) + " |", "|---|---|" + "---|" * len(dims)]
-    for s, v in record["held_out_by_style"].items():
-        lines.append(f"| {s} | {v['p_sad_mean']:.2f} | " + " | ".join(f"{v[d]:.3f}" for d in dims) + " |")
+    lines = [f"# Automatic measures: calibration on real recordings ({speaker})", "",
+             f"Train split {len(train)} clips; held-out (validation + test) {len(held)} clips; other Expresso speakers {len(others)} clips. "
+             f"Styles: {', '.join(styles)}.", "AUC: 0.5 = no better than chance, 1.0 = perfect separation.", "",
+             "| measure | check | result |", "|---|---|---|",
+             f"| style classifier ({len(classes)} styles) | held-out, share classified as the right style | {record['classifier']['held_out_accuracy']:.0%} |"]
+    for s, r in record_styles.items():
+        lines.append(f"| P({s}) | held-out default vs {s}, AUC | {r['classifier_auc']:.3f} |")
+        if "cue" in r:
+            sign = "low" if STYLE_CUES[s][1] < 0 else "high"
+            lines.append(f"| {sign} {r['cue']} (no training) | held-out {speaker} default vs {s}, AUC | {r['cue_auc_held_out']:.3f} |")
+            lines.append(f"| {sign} {r['cue']} (no training) | other speakers default vs {s}, AUC | {r['cue_auc_other_speakers']:.3f} |")
+    ss = record["speaker_similarity"]
+    lines += [f"| speaker similarity | held-out {speaker} vs other speakers, AUC | {ss['auc']:.3f} |",
+              f"| speaker similarity | median: held-out {speaker} / other speakers | {ss['held_out_median']:.3f} / {ss['other_speakers_median']:.3f} |"]
+    for s in styles:
+        lines.append(f"| word error rate | held-out real {s} recordings | {wer[s]:.1%} |")
+    lines += ["", "Held-out real recordings by style (classified as: share of clips the classifier puts in each style):", "",
+              "| style | " + " | ".join(f"classified {t}" for t in classes) + " | median arousal | median valence | median voicing |",
+              "|---|" + "---|" * (len(classes) + 3)]
+    for s, v in by_style.items():
+        lines.append(f"| {s} | " + " | ".join(f"{v['classified_as'][t]:.0%}" for t in classes)
+                     + f" | {v['arousal']:.3f} | {v['valence']:.3f} | {v['voicing']:.0%} |")
     text = "\n".join(lines)
     (out / "calibration.md").write_text(text + "\n")
     print(text)
@@ -384,7 +418,7 @@ def cmd_score(cfg, args):
     if not clf_path.is_file():
         raise SystemExit("no classifier yet: run scripts/auto_evaluate.py calibrate first")
     saved = pickle.loads(clf_path.read_bytes())
-    clf, centroid = saved["pipeline"], saved["centroid"]
+    clf, centroid, classes = saved["pipeline"], saved["centroid"], list(saved["pipeline"].classes_)
     m = Measures(cfg)
 
     clips = []  # {run, style, item_id, seed, clip_id, path, text}
@@ -405,10 +439,9 @@ def cmd_score(cfg, args):
 
     for i, c in enumerate(clips, 1):
         em = m.emotion(c["path"])
-        c["p_sad"] = float(clf.predict_proba(em["embedding"][None])[0, 1])
-        for d in ("arousal", "valence", "dominance"):
-            if d in em:
-                c[d] = em[d]
+        c["p"] = dict(zip(classes, map(float, clf.predict_proba(em["embedding"][None])[0])))
+        c["classified"] = max(c["p"], key=c["p"].get)
+        c.update({d: em[d] for d in ("arousal", "valence", "dominance")}, voicing=m.voicing(c["path"]))
         c["speaker_sim"] = float(m.xvector(c["path"]) @ centroid)
         ref, hyp = m.normalize_text(c["text"]), m.normalize_text(m.transcript(c["path"]))
         c["errors"], c["words"] = word_errors(ref, hyp), len(ref)
@@ -417,7 +450,7 @@ def cmd_score(cfg, args):
             m.save()
 
     runs = list(args.runs) + [REAL]
-    styles = cfg["speaker"]["styles"]
+    styles = [s for s in es["styles"] if any(c["style"] == s for c in clips)]
     cell = defaultdict(list)
     for c in clips:
         cell[(c["run"], c["style"])].append(c)
@@ -425,39 +458,42 @@ def cmd_score(cfg, args):
     def med(xs):
         return statistics.median(xs)
 
+    cal = saved["record"]
     lines = ["# Automatic measures on the evaluation set", "",
-             f"Classifier and speaker centroid from `calibrate` ({saved['record']['created_at']}): held-out real default vs sad "
-             f"accuracy {saved['record']['sadness_classifier']['held_out_accuracy']:.0%}, AUC {saved['record']['sadness_classifier']['held_out_auc']:.3f}.",
+             f"Classifier and speaker centroid from `calibrate` ({cal['created_at']}; styles {', '.join(classes)}; held-out real "
+             f"recordings classified correctly: {cal['classifier']['held_out_accuracy']:.0%}).",
              f"'{REAL}' are the speaker's own held-out recordings of the same test sentences (no new sentences exist for them).", "",
-             "| run | style | n | classified sad | mean P(sad) | median arousal | median valence | WER | median speaker similarity |",
-             "|---|---|---|---|---|---|---|---|---|"]
+             "| run | style | n | " + " | ".join(f"classified {t}" for t in classes)
+             + " | median arousal | median voicing | WER | median speaker similarity |",
+             "|---|---|---|" + "---|" * (len(classes) + 4)]
     for run in runs:
         for s in styles:
             xs = cell[(run, s)]
-            if not xs:
-                continue
-            lines.append(f"| {run} | {s} | {len(xs)} | {np.mean([x['p_sad'] >= 0.5 for x in xs]):.0%} | {np.mean([x['p_sad'] for x in xs]):.2f} | "
-                         f"{med([x['arousal'] for x in xs]):.3f} | {med([x['valence'] for x in xs]):.3f} | "
-                         f"{sum(x['errors'] for x in xs) / sum(x['words'] for x in xs):.1%} | {med([x['speaker_sim'] for x in xs]):.3f} |")
+            if xs:
+                lines.append(f"| {run} | {s} | {len(xs)} | " + " | ".join(f"{np.mean([x['classified'] == t for x in xs]):.0%}" for t in classes)
+                             + f" | {med([x['arousal'] for x in xs]):.3f} | {med([x['voicing'] for x in xs]):.0%} | "
+                             f"{sum(x['errors'] for x in xs) / sum(x['words'] for x in xs):.1%} | {med([x['speaker_sim'] for x in xs]):.3f} |")
 
-    # paired: the same sentence and seed in both styles; how often is the sad version the sadder one?
+    # paired: the same sentence and seed in default and in each other style
     pairs = defaultdict(dict)
     for c in clips:
         pairs[(c["run"], c["item_id"], c["seed"])][c["style"]] = c
-    lines += ["", "Paired comparison, the automatic version of \"which of these two sounds sadder?\": for each sentence (and seed), "
-              "the share of pairs where the sad version scores sadder than the default version. 50% = the styles are not told apart.", "",
-              "| run | pairs | sad version has higher P(sad) | sad version has lower arousal | separation in classified sad (points) |",
-              "|---|---|---|---|---|"]
-    summary = {}
+    lines += ["", "Paired comparison with default, the automatic version of \"which of these two is more <style>?\": for each sentence "
+              "(and seed), the share of pairs where the style's version scores higher on P(style) or on the style's own cue "
+              "(low arousal for sad, little voicing for whisper) than the default version. 50% = not told apart.", "",
+              "| run | style | pairs | higher P(style) | stronger cue | separation in classified style (points) |",
+              "|---|---|---|---|---|---|"]
+    summary = defaultdict(dict)
     for run in runs:
-        ps = [v for k, v in pairs.items() if k[0] == run and "sad" in v and "default" in v]
-        if not ps:
-            continue
-        higher = np.mean([p["sad"]["p_sad"] > p["default"]["p_sad"] for p in ps])
-        lower_ar = np.mean([p["sad"]["arousal"] < p["default"]["arousal"] for p in ps])
-        sep = (np.mean([x["p_sad"] >= 0.5 for x in cell[(run, "sad")]]) - np.mean([x["p_sad"] >= 0.5 for x in cell[(run, "default")]])) * 100
-        summary[run] = {"pairs": len(ps), "paired_sadder": float(higher), "paired_lower_arousal": float(lower_ar), "separation_points": float(sep)}
-        lines.append(f"| {run} | {len(ps)} | {higher:.0%} | {lower_ar:.0%} | {sep:+.0f} |")
+        for s in styles[1:]:
+            ps = [v for k, v in pairs.items() if k[0] == run and s in v and "default" in v]
+            if not ps:
+                continue
+            higher = float(np.mean([p[s]["p"][s] > p["default"]["p"][s] for p in ps]))
+            cue = float(np.mean([cue_score(p[s], s) > cue_score(p["default"], s) for p in ps])) if s in STYLE_CUES else None
+            sep = float(np.mean([x["classified"] == s for x in cell[(run, s)]]) - np.mean([x["classified"] == s for x in cell[(run, "default")]])) * 100
+            summary[run][s] = {"pairs": len(ps), "paired_higher_p": higher, "paired_stronger_cue": cue, "separation_points": sep}
+            lines.append(f"| {run} | {s} | {len(ps)} | {higher:.0%} | {'-' if cue is None else f'{cue:.0%}'} | {sep:+.0f} |")
 
     if args.key and args.ratings:
         key = read_json(args.key)["labels"]
@@ -475,7 +511,7 @@ def cmd_score(cfg, args):
             lines += ["", f"## Agreement with listener ratings ({len(rated)} rated clips from {len(args.ratings)} file(s))", "",
                       "| automatic measure | listener rating | agreement |", "|---|---|---|"]
             if 0 < sum(heard_sad) < len(heard_sad):
-                lines.append(f"| P(sad) | heard as sad ({sum(heard_sad)} clips) vs not | AUC {roc_auc_score(heard_sad, [c['p_sad'] for c, _ in rated]):.3f} |")
+                lines.append(f"| P(sad) | heard as sad ({sum(heard_sad)} clips) vs not | AUC {roc_auc_score(heard_sad, [c['p']['sad'] for c, _ in rated]):.3f} |")
                 lines.append(f"| low arousal | heard as sad vs not | AUC {roc_auc_score(heard_sad, [-c['arousal'] for c, _ in rated]):.3f} |")
             for auto_k, human_k, sign, name in (("speaker_sim", "speaker_consistency", 1, "speaker similarity"),
                                                 ("errors", "intelligibility", -1, "word errors (negated)")):
@@ -487,17 +523,17 @@ def cmd_score(cfg, args):
                 rc[(c["run"], c["style"])].append((c, x))
             for (run, s), xs in sorted(rc.items(), key=lambda kv: (kv[0][0] == REAL, kv[0])):
                 lines.append(f"| {run} | {s} | {len(xs)} | {np.mean([x['emotion'] == 'sad' for _, x in xs]):.0%} | "
-                             f"{np.mean([c['p_sad'] >= 0.5 for c, _ in xs]):.0%} |")
+                             f"{np.mean([c['classified'] == 'sad' for c, _ in xs]):.0%} |")
             lines.append("\nAUC 0.5 = no agreement, 1.0 = perfect; Spearman 0 = no agreement, +1 = same ranking.")
 
-    lines += ["", "These are automatic proxies, not ratings. 'Classified sad' and P(sad) come from a classifier trained on this speaker's "
-              "real recordings: it is meaningless for a voice that is not this speaker (the unchanged baseline is classified sad "
-              "in both styles), and it is more lenient than a listener (set-b), so use it to compare models of this voice, not "
-              "as proof that a clip sounds sad. Arousal needs no training and works across speakers, but agrees less with a listener."]
+    lines += ["", "These are automatic proxies, not ratings. The classifier is trained on this speaker's real recordings: it is "
+              "meaningless for a voice that is not this speaker (the unchanged baseline), and for sad it was more lenient than a "
+              "listener (set-b), so use it to compare models of this voice, not as proof of how a clip sounds. The cues (arousal, "
+              "voicing) need no training and work across speakers."]
     text = "\n".join(lines)
     out = auto_dir(cfg)
     write_json(out / f"score_{'_'.join(args.runs)}.json",
-               {"created_at": utc_now(), "runs": args.runs, "summary": summary,
+               {"created_at": utc_now(), "runs": args.runs, "classes": classes, "summary": summary,
                 "clips": [{k: (str(v) if isinstance(v, Path) else v) for k, v in c.items()} for c in clips]})
     (out / f"score_{'_'.join(args.runs)}.md").write_text(text + "\n")
     print(text)
