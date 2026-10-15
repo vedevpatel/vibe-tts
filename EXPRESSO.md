@@ -9,7 +9,9 @@ was too weak to hear (one listener, set-b: 2 of 13 sad clips heard as sad). **em
 words the base model already understands. Its two styles now differ about as much as the real recordings do on every
 automatic measure, and **by ear**: in a blinded "which one sounds sadder?" check, one listener picked v2's sad version in
 13 of 14 same-sentence pairs (0 the default, 1 "cannot tell"; p = 0.001 against guessing) and the real sad recording in
-8 of 8. One listener and 14 pairs: a clear result, not a large study. See [Results](#results).
+8 of 8. One listener and 14 pairs: a clear result, not a large study. See [Results](#results). **emotion-v3** adds whisper to the same
+speaker: it whispers like the real recordings by every automatic measure, sad and default stay as good as in v2, and a
+listener found the whispers good, apart from the clips the automatic check had flagged. `run.sh --style` uses v3.
 
 ## License: CC BY-NC 4.0, noncommercial
 
@@ -417,8 +419,34 @@ held-out recordings. Full output: [`results/completeness_emotion-v2.md`](results
   sentences had no such problem.
 - v1 had none in 56 clips, too few to say whether v2 is worse.
 
+### emotion-v3: adding whisper (automatic measures and a listen)
+v3 is v2's recipe on default + sad + whisper: the same data and descriptions for default and sad, whisper added with
+`prepare_expresso.py --extend` (see [Descriptions](#descriptions-and-what-was-verified)), and the same seed and settings.
+Validation loss was lowest at step 224 (epoch 4, as for v1 and v2), the exported checkpoint. The 3-style classifier and
+the voicing cue were checked on real recordings first ([`results/auto_calibration.md`](results/auto_calibration.md):
+100% of held-out real clips classified correctly; little voicing separates real whisper from default perfectly, for ex02
+and the three other speakers). Full output: [`results/auto_score_emotion-v3.md`](results/auto_score_emotion-v3.md),
+[`results/completeness_emotion-v3.md`](results/completeness_emotion-v3.md).
+
+| 28 clips per style (14 sentences x 2 seeds) | classified as intended | voicing | same-sentence pairs: higher P / stronger cue than default | WER | speaker similarity |
+|---|---|---|---|---|---|
+| **v3 whisper** | **96%** | **10%** | **100% / 100%** | 4.8% | 0.86 |
+| real whisper (8 clips) | 100% | 9% | 100% / 100% | 5.6% | 0.92 |
+| v3 sad | 89% | 69% | 100% / 96% | 1.4% | 0.92 |
+| v2 sad (same classifier) | 93% | 66% | 100% / 96% | 1.4% | 0.90 |
+| v3 default | 96% | 70% | | 1.9% | 0.91 |
+
+- **Whisper is learned**: nearly unvoiced like the real thing and as intelligible to Whisper ASR. The unchanged model,
+  given the same description, does not whisper at all (67% voiced): the word alone is not enough, the fine-tune is.
+- **Sad and default are unchanged** from v2 within noise; adding a style cost nothing measurable.
+- **Whispers are a little less like the speaker's voice** to the x-vector model (0.86 vs 0.92 for her real whispers).
+- **Early stops**: none in 56 default and sad clips. In whisper, 3 of 28 clips were flagged by the transcript check
+  (garbled words, or the last words not heard); a listener confirmed those three sound wonky and found the rest of the
+  whispers good (4 sentences heard next to the real recordings). The audio-only checks that `run.sh --style` retries on
+  do not catch these, so expect roughly 1 whispered clip in 10 to need regenerating by hand.
+
 ### Everyday use
-`scripts/run.sh --style default|sad "Text."` speaks with the checkpoint named in `[speak]` of the config (emotion-v2),
+`scripts/run.sh --style default|sad|whisper "Text."` speaks with the checkpoint named in `[speak]` of the config (emotion-v3; v2 before),
 using the descriptions stored with that checkpoint (`export_info.json`) and the evaluated generation settings. A check of
 3 new sentences per style gave P(sad) 0.00-0.06 for default and 0.94-1.00 for sad, lower arousal for sad in all 3 pairs,
 speaker similarity 0.87-0.97 and exact transcripts. Without `--style`, `run.sh` is unchanged.
@@ -446,16 +474,20 @@ answer keys are `outputs/expresso/listening/set-{a,b}.answer_key.json`; do not o
 ```
 
 ### Next steps
-1. More styles (happy, whisper, ...) with v2 kept as the working baseline: attribute-word descriptions, a new run,
-   `auto_evaluate.py score` and `completeness`, then a `pairs` check by ear for each style. Start with one (happy).
-2. Optional: a second listener on `check-1`, absolute naturalness ratings of v2, and the robustness batch for v1 (is
-   v2's 1% early-stop rate new?).
+1. Catch wonky whispers automatically: an optional transcript check (Whisper ASR) in `run.sh --style`'s retry, since the
+   audio-only checks miss the roughly 1 in 10 whispered clips that sound wrong.
+2. More styles on the same recipe, each with `--extend`, a new run, automatic scoring and a short listen. Measured on 60
+   real clips per style, how far each is from ex02's default (best single measure, AUC): whisper 1.00 (voicing), enunciated
+   0.97 and confused 0.94 (pace), laughing 0.87-0.91 (arousal, valence), happy only 0.69 (arousal; her default already
+   sounds upbeat), so happy is the hardest to learn and to confirm.
+3. Optional: a second listener, absolute naturalness ratings, a robustness batch for v3.
 
 ### Artifacts
 | what | where | notes |
 |---|---|---|
 | fine-tuned checkpoint (step 148) | `data/expresso/runs/emotion-v1/export/` | sha256 verified; carries `NONCOMMERCIAL_NOTICE.md`; **not published** |
 | emotion-v2 checkpoint (step 148) | `data/expresso/runs/emotion-v2/export/` | same; v2 descriptions |
+| emotion-v3 checkpoint (step 224) | `data/expresso/runs/emotion-v3/export/` | same; default, sad, whisper; used by `run.sh --style` |
 | automatic scores | `outputs/expresso/auto/` (per-clip JSON, cache), summaries in `results/auto_*.md`, `results/completeness_*.md` | |
 | robustness batch (v2) | `outputs/expresso/runs/robustness-finetuned-emotion-v2/` | 120 clips |
 | training record | `data/expresso/runs/emotion-v1/{train_config.json,environment.json,train.log}` | |
