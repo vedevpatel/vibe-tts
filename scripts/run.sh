@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Synthesize on this machine (CUDA, MPS or CPU, whichever is available) and play the audio.
 #
-# Usage: scripts/run.sh [--compile] [--style default|sad] ["sentence" ...]
+# Usage: scripts/run.sh [--compile] [--style default|sad|whisper] ["sentence" ...]
 #   --style  speak with the Expresso emotion fine-tune (one speaker's voice; noncommercial, see EXPRESSO.md)
 # Env:   NOPLAY=1 to skip playback   VIBE_TTS_DEVICE=cuda|mps|cpu to force a backend
 # With no sentences, speaks speak.py's built-in test sentences. For a Colab GPU: run_colab.sh.
