@@ -1,7 +1,7 @@
 """Prepare training examples for one Expresso speaker and create frozen, leak-free splits.
 
 Usage: .venv/bin/python scripts/prepare_expresso.py [--config PATH] [--workers N]
-                                                     [--verify-only] [--refreeze]
+                                                     [--verify-only] [--refreeze] [--extend]
 
 Reads <data root>/raw (scripts/download_expresso.py) and the speaker / styles / gates in the config.
 Writes:
@@ -36,7 +36,7 @@ from pathlib import Path
 from _common import ROOT, model_dir  # first: loads .env
 from expresso_common import (Config, analyze_audio, check_descriptions, description_for, load_transcripts, log, normalize_transcript, remove_tree,
                              quality_issues, read_json, sha256_file, strip_emphasis_markers, utc_now, write_json)
-from inventory_expresso import discover
+from inventory_expresso import discover, pitch_profile
 
 SPLITS = ("train", "validation", "test")
 
@@ -66,7 +66,7 @@ def _process(job):
     rec["sha256"] = sha256_file(src)
     issues = quality_issues(rec, text, prep)
     rec["issues"] = [list(i) for i in issues]
-    if issues:
+    if issues or dst is None:   # dst None: measure only (--extend, for already prepared clips)
         return rec
     x, sr = sf.read(src, dtype="float32", always_2d=True)
     m = x[:, 0]
@@ -116,9 +116,14 @@ def group_examples(examples):
 
 def assign_splits(examples, ratios, styles, seed):
     """Greedy, seeded assignment of whole groups to splits so each split gets its share of EACH style."""
-    groups = group_examples(examples)
+    return place_groups(group_examples(examples), examples, ratios, styles, seed, {sp: Counter() for sp in SPLITS})
+
+
+def place_groups(groups, examples, ratios, styles, seed, have):
+    """Assign whole groups to splits, greedily toward each split's share of every style. `have` counts what each split
+    already holds (empty for a fresh split; the existing examples for --extend). Returns {example index: split}."""
     rng = random.Random(seed)
-    groups.sort(key=lambda g: (-len(g), min(examples[i]["id"] for i in g)))       # big groups first: they are the hardest to place
+    groups = sorted(groups, key=lambda g: (-len(g), min(examples[i]["id"] for i in g)))   # big groups first: hardest to place
     # shuffle within equal-size runs, deterministically
     by_size = defaultdict(list)
     for g in groups:
@@ -130,7 +135,7 @@ def assign_splits(examples, ratios, styles, seed):
         ordered.extend(gs)
     total = {s: sum(1 for e in examples if e["style"] == s) for s in styles}
     target = {sp: {s: total[s] * ratios[sp] for s in styles} for sp in SPLITS}
-    have = {sp: Counter() for sp in SPLITS}
+    have = {sp: Counter(c) for sp, c in have.items()}
     assign = {}
     for g in ordered:
         comp = Counter(examples[i]["style"] for i in g)
@@ -227,6 +232,191 @@ def write_splits(examples, cfg, styles):
     return rep
 
 
+def accept_examples(sel, jobs, results, texts, cfg, speaker, styles, first_by_hash):
+    """Accept or exclude processed clips: gate issues, the resampling check, duplicate audio (also against
+    `first_by_hash`, {sha256: id} of examples accepted before), then a per-style transcript/audio plausibility check.
+    Returns (examples, excluded)."""
+    proc = cfg.path("processed")
+    examples, excluded = [], []
+    for it, job, r in zip(sel, jobs, results):
+        text_orig = texts.get(it["stem"])
+        reasons = [{"code": c, "detail": d} for c, d in r["issues"]]
+        if not reasons:
+            if r["resample_len_error"] > 2 or abs(r["resample_rms_db_diff"]) > 0.1:
+                reasons.append({"code": "resample_check", "detail": f"length off by {r['resample_len_error']} samples, level {r['resample_rms_db_diff']} dB"})
+            elif r["sha256"] in first_by_hash:
+                reasons.append({"code": "duplicate_audio", "detail": f"identical bytes to {first_by_hash[r['sha256']]}"})
+        if reasons:
+            excluded.append({"id": it["stem"], "source_file": it["file"], "style": it["style"], "reasons": reasons})
+            Path(job[1]).unlink(missing_ok=True)
+            continue
+        first_by_hash[r["sha256"]] = it["stem"]
+        text = strip_emphasis_markers(text_orig)
+        examples.append({
+            "id": it["stem"], "source_file": it["file"], "audio_path": f"audio/{speaker}/{it['stem']}.wav", "text": text,
+            "text_original": text_orig, "speaker": speaker, "style": it["style"],
+            "description": description_for(cfg, speaker, it["style"]), "duration_s": r["out_duration_s"],
+            "sample_rate": r["out_sample_rate"], "source_sha256": r["sha256"], "segment": None,
+            "norm_text": normalize_transcript(text), "source_duration_s": r["duration_s"],
+        })
+
+    # transcript/audio plausibility: characters per second of the whole clip, judged within (style),
+    # robust z-score. Catches a transcript attached to the wrong audio without any ASR.
+    for s in styles:
+        es = [e for e in examples if e["style"] == s]
+        rates = [len(e["text"]) / e["duration_s"] for e in es]
+        med = statistics.median(rates)
+        mad = statistics.median(abs(r - med) for r in rates) or 1e-9
+        for e, r in zip(es, rates):
+            z = 0.6745 * (r - med) / mad
+            if abs(z) > 6:
+                excluded.append({"id": e["id"], "source_file": e["source_file"], "style": s, "reasons": [
+                    {"code": "transcript_audio_mismatch_suspected", "detail": f"{r:.1f} chars/s vs style median {med:.1f} (robust z {z:.1f}); text={e['text']!r}"}]})
+                (proc / e["audio_path"]).unlink(missing_ok=True)
+        examples = [e for e in examples if e["id"] not in {x["id"] for x in excluded}]
+
+    return examples, excluded
+
+
+def _pitch(job):
+    return pitch_profile(*job)
+
+
+def extend(cfg, args, styles, speaker):
+    """Add the config's new styles to prepared data without changing it. The existing manifest rows, their audio and
+    their splits stay byte for byte; a new clip joins the split its transcript (or audio) already belongs to; clips with
+    text the data has not seen are placed so each split gets its share of the new style. The frozen test split only
+    grows: its existing rows must reappear unchanged, or nothing is written."""
+    proc, splits_dir = cfg.path("processed"), cfg.path("splits")
+    old = [json.loads(line) for line in (proc / "manifest.jsonl").read_text().splitlines()]
+    old_styles = sorted({e["style"] for e in old})
+    new_styles = [s for s in styles if s not in old_styles]
+    if set(old_styles) - set(styles):
+        raise SystemExit(f"the config no longer lists prepared styles {sorted(set(old_styles) - set(styles))}; --extend only adds")
+    if not new_styles:
+        raise SystemExit(f"nothing to extend: the prepared data already has every configured style ({old_styles})")
+    target_sr, found = model_sample_rate(model_dir(cfg["training"]["base_model"]))
+    if {e["sample_rate"] for e in old} != {target_sr}:
+        raise SystemExit("the prepared audio is not at the model's sample rate; prepare from scratch instead")
+
+    items, _ = discover(cfg.path("raw"))
+    texts = load_transcripts(cfg.path("raw"))
+    corpora, excl_sub = set(cfg["speaker"]["corpora"]), set(cfg["speaker"]["exclude_substyles"])
+    sel = [it for it in items if it["speaker"] == speaker and it["style"] in styles and it["corpus"] in corpora
+           and it["substyle"] not in excl_sub]
+    new_sel = [it for it in sel if it["style"] in new_styles]
+    old_ids = {e["id"] for e in old}
+    old_sel = [it for it in sel if it["stem"] in old_ids]
+    if len(old_sel) != len(old):
+        raise SystemExit(f"{len(old) - len(old_sel)} prepared examples are no longer in the raw data; refusing to extend")
+    log(f"extending {speaker} {old_styles} with {new_styles}: {len(new_sel)} candidate clips")
+
+    audio_root = proc / "audio" / speaker
+    for s in new_styles:   # leftovers of an interrupted --extend must not survive
+        for p in audio_root.glob(f"{speaker}_{s}_*.wav"):
+            p.unlink()
+    jobs = [(str(it["path"]), str(audio_root / f"{it['stem']}.wav"), target_sr, texts.get(it["stem"]), cfg["prepare"]) for it in new_sel]
+    old_jobs = [(str(it["path"]), None, target_sr, texts.get(it["stem"]), cfg["prepare"]) for it in old_sel]   # measured, never rewritten
+    with ProcessPoolExecutor(args.workers) as ex:
+        results = list(ex.map(_process, jobs, chunksize=8))
+        old_results = list(ex.map(_process, old_jobs, chunksize=8))
+    new_ex, excluded = accept_examples(new_sel, jobs, results, texts, cfg, speaker, new_styles,
+                                       {e["source_sha256"]: e["id"] for e in old})
+
+    # description checks over every style: existing examples from their measurements, new ones from this run
+    old_by_id = {e["id"]: e for e in old}
+    accepted = {s: [] for s in styles}
+    for it, r in zip(old_sel, old_results):
+        e = old_by_id[it["stem"]]
+        accepted[e["style"]].append(dict(r, chars_per_active_s=len(e["text"]) / max(e["duration_s"] * r["active_fraction"], 0.1)))
+    by_stem = {it["stem"]: r for it, r in zip(new_sel, results)}
+    for e in new_ex:
+        r = by_stem[e["id"]]
+        accepted[e["style"]].append(dict(r, chars_per_active_s=len(e["text"]) / max(e["duration_s"] * r["active_fraction"], 0.1)))
+    pitch = defaultdict(lambda: defaultdict(list))
+    for line in (cfg.path("inventory") / "files.jsonl").read_text().splitlines():
+        f = json.loads(line)
+        if f["stem"] in old_ids and f.get("f0_median_hz") is not None:
+            for k in ("f0_median_hz", "f0_range_st", "voiced_fraction"):
+                pitch[f["style"]][k].append(f[k])
+    rng = random.Random(cfg["split"]["seed"])
+    for s in new_styles:   # the inventory measured pitch for the original styles only: a seeded sample of the new ones
+        es = [e for e in new_ex if e["style"] == s]
+        sample = rng.sample(es, min(150, len(es)))
+        with ProcessPoolExecutor(args.workers) as ex:
+            for pp in ex.map(_pitch, [(str(proc / e["audio_path"]), e["text"]) for e in sample]):
+                pitch[s]["voiced_fraction"].append(pp["voiced_fraction"])
+                if pp["f0_median_hz"] is not None:
+                    pitch[s]["f0_median_hz"].append(pp["f0_median_hz"])
+                    pitch[s]["f0_range_st"].append(pp["f0_range_st"])
+    checks = check_descriptions(cfg, speaker, styles, accepted, pitch)
+    for c in checks["claims"]:
+        log(f"  [{c['verdict']}] {c['claim']}: {c['evidence']}")
+
+    # splits: existing groups keep their split; groups with only new clips are placed toward the new style's shares
+    for e in old:
+        e["norm_text"] = normalize_transcript(e["text"])
+    examples = sorted(old + new_ex, key=lambda e: e["id"])
+    groups = group_examples(examples)
+    assign, gid, pending = {}, {}, []
+    for g in groups:
+        known = {examples[i]["split"] for i in g if examples[i]["id"] in old_ids}
+        if len(known) > 1:
+            raise SystemExit(f"a new clip links groups in different splits ({sorted(known)}): {[examples[i]['id'] for i in g]}")
+        if known:
+            name = min(examples[i]["group_id"] for i in g if examples[i]["id"] in old_ids)
+            for i in g:
+                assign[i], gid[i] = next(iter(known)), name
+        else:
+            pending.append(g)
+            for i in g:
+                gid[i] = "g_" + min(examples[j]["id"] for j in g)
+    ratios = {sp: cfg["split"][sp] for sp in SPLITS}
+    have = {sp: Counter(examples[i]["style"] for i, s in assign.items() if s == sp) for sp in SPLITS}
+    assign.update(place_groups(pending, examples, ratios, styles, cfg["split"]["seed"], have))
+    for i, e in enumerate(examples):
+        if e["id"] in old_ids:
+            assert e["split"] == assign[i] and e["group_id"] == gid[i]
+        e["split"], e["group_id"] = assign[i], gid[i]
+    fails = verify(examples, cfg, styles)
+    if fails:
+        raise SystemExit("split verification failed:\n  " + "\n  ".join(fails))
+
+    old_test = (splits_dir / "test.jsonl").read_text().splitlines()
+    new_test = [json.dumps(manifest_row(e), ensure_ascii=False) for e in examples if e["split"] == "test"]
+    missing = set(old_test) - set(new_test)
+    if missing:
+        raise SystemExit(f"{len(missing)} rows of the frozen test split would change; nothing written")
+
+    # all checks passed: write
+    rep = write_splits(examples, cfg, styles)
+    with open(proc / "manifest.jsonl", "w") as f:
+        for e in examples:
+            f.write(json.dumps(manifest_row(e), ensure_ascii=False) + "\n")
+    old_excluded = [json.loads(line) for line in (proc / "exclusions.jsonl").read_text().splitlines()]
+    with open(proc / "exclusions.jsonl", "w") as f:
+        for x in sorted(old_excluded + excluded, key=lambda x: x["id"]):
+            f.write(json.dumps(x, ensure_ascii=False) + "\n")
+    write_json(proc / "description_checks.json", checks)
+    frozen = read_json(splits_dir / "FROZEN.json")
+    write_json(splits_dir / "FROZEN.json", {
+        "frozen_at": frozen["frozen_at"], "test_sha256": sha256_file(splits_dir / "test.jsonl"),
+        "n_test": len(new_test), "seed": cfg["split"]["seed"],
+        "extensions": frozen.get("extensions", []) + [{
+            "at": utc_now(), "added_styles": new_styles, "previous_test_sha256": frozen["test_sha256"],
+            "previous_n_test": frozen["n_test"], "previous_rows_unchanged": True}]})
+    info = read_json(proc / "prepare_info.json")
+    info.setdefault("extensions", []).append({
+        "at": utc_now(), "added_styles": new_styles, "candidates": len(new_sel), "accepted": len(new_ex), "excluded": len(excluded),
+        "exclusion_counts": dict(Counter(r["code"] for x in excluded for r in x["reasons"]))})
+    info.update(styles=styles, accepted=len(examples), report=rep)
+    write_json(proc / "prepare_info.json", info)
+    log(f"accepted {len(new_ex)} / {len(new_sel)} new clips; excluded {len(excluded)}: "
+        f"{dict(Counter(r['code'] for x in excluded for r in x['reasons']))}")
+    log((splits_dir / "split_report.md").read_text())
+    log(f"verified: no transcript, source file or audio hash crosses a split; the {len(old_test)} earlier test rows are unchanged")
+
+
 MANIFEST_FIELDS = ("id", "source_file", "audio_path", "text", "text_original", "speaker", "style", "description",
                    "duration_s", "sample_rate", "split", "group_id", "source_sha256", "segment")
 
@@ -241,6 +431,8 @@ def main():
     ap.add_argument("--workers", type=int, default=min(8, os.cpu_count() or 1))
     ap.add_argument("--verify-only", action="store_true", help="re-verify the saved manifests and splits, change nothing")
     ap.add_argument("--refreeze", action="store_true", help="allow replacing a frozen test split (starts a new experiment)")
+    ap.add_argument("--extend", action="store_true", help="add the config's new styles to the prepared data; existing "
+                    "examples, their audio and their splits stay exactly as they are")
     args = ap.parse_args()
     cfg = Config(args.config)
     cfg.require_data_root()
@@ -248,6 +440,8 @@ def main():
     speaker = cfg.speaker()
     proc, splits_dir = cfg.path("processed"), cfg.path("splits")
     manifest_path = proc / "manifest.jsonl"
+    if args.extend:
+        return extend(cfg, args, styles, speaker)
 
     if args.verify_only:
         examples = [json.loads(l) for l in manifest_path.read_text().splitlines()]
@@ -293,44 +487,7 @@ def main():
                 log(f"  {i}/{len(jobs)} processed")
 
     # ---- accept / exclude
-    examples, excluded = [], []
-    first_by_hash = {}
-    for it, job, r in zip(sel, jobs, results):
-        text_orig = texts.get(it["stem"])
-        reasons = [{"code": c, "detail": d} for c, d in r["issues"]]
-        if not reasons:
-            if r["resample_len_error"] > 2 or abs(r["resample_rms_db_diff"]) > 0.1:
-                reasons.append({"code": "resample_check", "detail": f"length off by {r['resample_len_error']} samples, level {r['resample_rms_db_diff']} dB"})
-            elif r["sha256"] in first_by_hash:
-                reasons.append({"code": "duplicate_audio", "detail": f"identical bytes to {first_by_hash[r['sha256']]}"})
-        if reasons:
-            excluded.append({"id": it["stem"], "source_file": it["file"], "style": it["style"], "reasons": reasons})
-            Path(job[1]).unlink(missing_ok=True)
-            continue
-        first_by_hash[r["sha256"]] = it["stem"]
-        text = strip_emphasis_markers(text_orig)
-        examples.append({
-            "id": it["stem"], "source_file": it["file"], "audio_path": f"audio/{speaker}/{it['stem']}.wav", "text": text,
-            "text_original": text_orig, "speaker": speaker, "style": it["style"],
-            "description": description_for(cfg, speaker, it["style"]), "duration_s": r["out_duration_s"],
-            "sample_rate": r["out_sample_rate"], "source_sha256": r["sha256"], "segment": None,
-            "norm_text": normalize_transcript(text), "source_duration_s": r["duration_s"],
-        })
-
-    # transcript/audio plausibility: characters per second of the whole clip, judged within (style),
-    # robust z-score. Catches a transcript attached to the wrong audio without any ASR.
-    for s in styles:
-        es = [e for e in examples if e["style"] == s]
-        rates = [len(e["text"]) / e["duration_s"] for e in es]
-        med = statistics.median(rates)
-        mad = statistics.median(abs(r - med) for r in rates) or 1e-9
-        for e, r in zip(es, rates):
-            z = 0.6745 * (r - med) / mad
-            if abs(z) > 6:
-                excluded.append({"id": e["id"], "source_file": e["source_file"], "style": s, "reasons": [
-                    {"code": "transcript_audio_mismatch_suspected", "detail": f"{r:.1f} chars/s vs style median {med:.1f} (robust z {z:.1f}); text={e['text']!r}"}]})
-                (proc / e["audio_path"]).unlink(missing_ok=True)
-        examples = [e for e in examples if e["id"] not in {x["id"] for x in excluded}]
+    examples, excluded = accept_examples(sel, jobs, results, texts, cfg, speaker, styles, {})
 
     by_id = {it["stem"]: r for it, r in zip(sel, results)}
     accepted = {s: [] for s in styles}
