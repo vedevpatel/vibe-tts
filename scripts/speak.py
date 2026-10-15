@@ -1,9 +1,9 @@
 """Synthesize sentences with the local parler-tts-mini-v1 weights (see scripts/download_models.py).
 
-Usage: .venv/bin/python scripts/speak.py [--compile] [--style default|sad] ["sentence one" "sentence two" ...]
+Usage: .venv/bin/python scripts/speak.py [--compile] [--style default|sad|whisper] ["sentence one" "sentence two" ...]
 Writes speak_<n>.wav to the output dir (VIBE_TTS_OUTPUT_DIR, default outputs/). With no sentences, runs a few built-in test sentences.
 
---style speaks with the Expresso emotion fine-tune instead (one speaker's voice, default or sad delivery; noncommercial,
+--style speaks with the Expresso emotion fine-tune instead (one speaker's voice; default, sad or whisper; noncommercial,
 see EXPRESSO.md), using the descriptions and generation settings it was evaluated with.
 
 --compile (CUDA only) compiles the forward pass with a static cache. It costs ~30s of
@@ -37,7 +37,7 @@ DEFAULT_SENTENCES = [
 parser = argparse.ArgumentParser()
 parser.add_argument("sentences", nargs="*")
 parser.add_argument("--compile", action="store_true", help="torch.compile with a static cache (CUDA only)")
-parser.add_argument("--style", help="speak with the Expresso emotion fine-tune in this style (default or sad): Expresso "
+parser.add_argument("--style", help="speak with the Expresso emotion fine-tune in this style (default, sad or whisper): Expresso "
                     "speaker ex02's voice, noncommercial use only, see EXPRESSO.md. Which checkpoint: [speak] in "
                     "configs/expresso_emotion.toml")
 args = parser.parse_args()
