@@ -250,7 +250,8 @@ def audio_problem(path, text, style, pace):
 def description_for(cfg, speaker, style):
     """Conditioning description. Identical structure for every style; only the style phrase differs."""
     d = cfg["description"]
-    return d["template"].format(speaker=speaker, style_phrase=d["style_phrase"][style])
+    recording = d.get("recording_for", {}).get(style, d.get("recording", ""))
+    return d["template"].format(speaker=speaker, style_phrase=d["style_phrase"][style], recording=recording)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -350,14 +351,22 @@ def check_descriptions(cfg, speaker, styles, accepted, pitch):
             "chars_per_active_s": med([x["chars_per_active_s"] for x in c]),
             "f0_median_hz": med(pitch.get(s, {}).get("f0_median_hz", [])),
             "f0_range_st": med(pitch.get(s, {}).get("f0_range_st", [])),
-            "pitch_clips_measured": len(pitch.get(s, {}).get("f0_median_hz", [])),
+            "voiced_fraction": med(pitch.get(s, {}).get("voiced_fraction", [])),
+            "pitch_clips_measured": len(pitch.get(s, {}).get("voiced_fraction", []) or pitch.get(s, {}).get("f0_median_hz", [])),
         }
+    desc = cfg["description"]
     for s in styles:
         m = out["per_style"][s]
-        ok = m["noise_floor_median_dbfs"] <= chk["noise_floor_median_max_dbfs"] and m["noise_floor_p95_dbfs"] <= chk["noise_floor_p95_max_dbfs"]
-        out["claims"].append({"claim": f"'{s}': the recording is clear with little background noise", "verdict": "supported" if ok else "NOT supported",
-                              "evidence": f"noise floor median {m['noise_floor_median_dbfs']} dBFS (limit {chk['noise_floor_median_max_dbfs']}), "
-                                          f"95th percentile {m['noise_floor_p95_dbfs']} dBFS (limit {chk['noise_floor_p95_max_dbfs']})"})
+        floor = (f"noise floor median {m['noise_floor_median_dbfs']} dBFS (limit {chk['noise_floor_median_max_dbfs']}), "
+                 f"95th percentile {m['noise_floor_p95_dbfs']} dBFS (limit {chk['noise_floor_p95_max_dbfs']})")
+        if s not in desc.get("recording_for", {}):
+            ok = m["noise_floor_median_dbfs"] <= chk["noise_floor_median_max_dbfs"] and m["noise_floor_p95_dbfs"] <= chk["noise_floor_p95_max_dbfs"]
+            out["claims"].append({"claim": f"'{s}': {desc['recording']}", "verdict": "supported" if ok else "NOT supported", "evidence": floor})
+        else:   # an own recording sentence ("fairly clear, with some background noise"): noisier than the limit, still >= 20 dB SNR
+            snr = round(m["speech_level_dbfs"] - m["noise_floor_median_dbfs"], 1)
+            ok = m["noise_floor_median_dbfs"] > chk["noise_floor_median_max_dbfs"] and snr >= 20
+            out["claims"].append({"claim": f"'{s}': {desc['recording_for'][s]}", "verdict": "supported" if ok else "NOT supported",
+                                  "evidence": f"{floor}; speech {snr} dB above the noise floor (fairly clear: >= 20)"})
     if "default" in styles and "sad" in styles:
         d, sd = out["per_style"]["default"], out["per_style"]["sad"]
         ind = {}
@@ -370,8 +379,24 @@ def check_descriptions(cfg, speaker, styles, accepted, pitch):
                               "verdict": "supported" if n_low >= chk["subdued_min_indicators"] else "NOT supported",
                               "evidence": f"sad lower in {n_low} of {len(ind)} measured indicators: " + "; ".join(
                                   f"{k} {v['sad']} vs {v['default']}" for k, v in ind.items())})
-    out["claims"].append({"claim": "'default': a neutral delivery", "verdict": "label only",
-                          "evidence": "Expresso's 'default' style is the unmarked read style; neutrality is not measurable here"})
+    if "default" in styles and "sad" in styles:
+        dd, sd = out["per_style"]["default"], out["per_style"]["sad"]
+        out["claims"].append({"claim": f"'default': {desc['style_phrase']['default']}", "verdict": "label only",
+                              "evidence": f"perceptual; F0 range {dd['f0_range_st']} vs {sd['f0_range_st']} semitones for sad, and a listener "
+                                          "heard the real default recordings as lively (EXPRESSO.md, set-b)"})
+    if "default" in styles and "whisper" in styles:
+        dd, w = out["per_style"]["default"], out["per_style"]["whisper"]
+        if w["voiced_fraction"] is not None and dd["voiced_fraction"] is not None:
+            ok = w["voiced_fraction"] < 0.25 and w["voiced_fraction"] < dd["voiced_fraction"] / 2
+            out["claims"].append({"claim": "'whisper': with no pitch", "verdict": "supported" if ok else "NOT supported",
+                                  "evidence": f"pitch found in {w['voiced_fraction']:.0%} of frames vs {dd['voiced_fraction']:.0%} for default "
+                                              f"(medians over {w['pitch_clips_measured']} / {dd['pitch_clips_measured']} clips)"})
+        out["claims"].append({"claim": "'whisper': soft", "verdict": "supported" if w["speech_level_dbfs"] < dd["speech_level_dbfs"] else "NOT supported",
+                              "evidence": f"speech level {w['speech_level_dbfs']} vs {dd['speech_level_dbfs']} dBFS for default"})
+        ratio = w["chars_per_active_s"] / dd["chars_per_active_s"]
+        out["claims"].append({"claim": "'whisper': at a moderate speed (the same as default)", "verdict": "supported" if 0.85 <= ratio <= 1.15 else "NOT supported",
+                              "evidence": f"pace {w['chars_per_active_s']} vs {dd['chars_per_active_s']} characters per active second ({ratio:.2f}x)"})
+        out["claims"].append({"claim": "'whisper': breathy", "verdict": "label only", "evidence": "perceptual; not measured"})
     out["claims"].append({"claim": "'conversational' (if present in the style phrase)", "verdict": "NOT verifiable",
                           "evidence": "the clips are read-aloud sentences, not conversation; no measurement can support the word"})
     return out
