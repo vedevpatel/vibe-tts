@@ -54,7 +54,8 @@ extract = [
 id = "ex02"
 # A speaker is a candidate only if EVERY target style has at least this many usable clips.
 min_usable_clips_per_style = 100
-styles = ["default", "sad"]      # original Expresso style names (directory names under read/)
+styles = ["default", "sad", "whisper"]   # original Expresso style names (directory names under read/); whisper from emotion-v3
+#   Adding a style to prepared data: prepare_expresso.py --extend (existing examples and their splits stay as they are).
 # Read-speech corpora to use. "base" = short sentences; "longform" = long recordings (excluded:
 # no sentence-level transcripts, far above the 30 s training limit).
 corpora = ["base"]
@@ -77,10 +78,19 @@ exclude_substyles = ["emphasis", "essentials"]
 # default recordings as lively, not neutral (set-b).
 # emotion-v1 used: template "Expresso speaker {speaker} speaks in a {style_phrase} delivery. The recording is clear
 # with little background noise." with default = "neutral" and sad = "sad, subdued".
-template = "Expresso speaker {speaker} {style_phrase}. The recording is clear with little background noise."
+#
+# emotion-v3 adds whisper; default and sad produce exactly the v2 text. ex02's whispered recordings (prepare's
+# description checks): voiced in 8% of frames against 69% for default (no pitch), speech about 2 dB softer, the same
+# pace as default, and a noise floor of about -49 dBFS against -60 (above the -55 limit for "little background noise"),
+# hence their own recording sentence.
+template = "Expresso speaker {speaker} {style_phrase}. {recording}"
+recording = "The recording is clear with little background noise."
 [description.style_phrase]
 default = "delivers an expressive and animated speech with a moderate speed and pitch"
 sad = "delivers a sad, monotone speech, speaking slowly with a low pitch"
+whisper = "whispers in a soft, breathy voice with no pitch, at a moderate speed"
+[description.recording_for]      # styles whose recordings do not fit the shared sentence
+whisper = "The recording is fairly clear, with some background noise."
 
 [description.checks]
 # prepare_expresso.py tests the measurable claims in the descriptions against the accepted recordings
