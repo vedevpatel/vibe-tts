@@ -548,6 +548,11 @@ judged against the full text by the same rule:
 About a minute per long whisper on MPS when no piece needs a retry. A listener heard 5 of these (including the awkward
 cut "her bed was | so full") and found the joins and pauses pretty good.
 
+The local page, `scripts/serve.py`, does the same through a browser: it loads the checkpoint once (so only generation
+time is paid per clip, not the 10-20 s model load), with the style buttons and "check words" (`--check`) on by default.
+Both use `scripts/styled_voice.py`. When Whisper hears a complete clip exactly as it heard the try before, the clip is kept:
+the text is spelled differently from how it is heard ("can not" / "cannot"), and more tries would only repeat it.
+
 ### Listen
 Two blinded pages are ready (open `index.html` in a browser; ratings save automatically in that browser and export as JSON):
 
