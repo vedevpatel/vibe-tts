@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Synthesize on this machine (CUDA, MPS or CPU, whichever is available) and play the audio.
 #
-# Usage: scripts/run.sh [--compile] [--style default|sad|whisper [--check]] ["sentence" ...]
+# Usage: scripts/run.sh [--compile] [--style default|sad|whisper|enunciated [--check]] ["sentence" ...]
 #   --style  speak with the Expresso emotion fine-tune (one speaker's voice; noncommercial, see EXPRESSO.md)
 #   --check  with --style: also transcribe each clip with Whisper and regenerate garbled ones (a few seconds per clip)
 # Env:   NOPLAY=1 to skip playback   VIBE_TTS_DEVICE=cuda|mps|cpu to force a backend
