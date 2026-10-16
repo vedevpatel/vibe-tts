@@ -397,6 +397,23 @@ def check_descriptions(cfg, speaker, styles, accepted, pitch):
         out["claims"].append({"claim": "'whisper': at a moderate speed (the same as default)", "verdict": "supported" if 0.85 <= ratio <= 1.15 else "NOT supported",
                               "evidence": f"pace {w['chars_per_active_s']} vs {dd['chars_per_active_s']} characters per active second ({ratio:.2f}x)"})
         out["claims"].append({"claim": "'whisper': breathy", "verdict": "label only", "evidence": "perceptual; not measured"})
+    if "default" in styles and "enunciated" in styles:
+        dd, e = out["per_style"]["default"], out["per_style"]["enunciated"]
+        ratio = e["chars_per_active_s"] / dd["chars_per_active_s"]
+        slowest = all(e["chars_per_active_s"] < out["per_style"][s]["chars_per_active_s"] for s in styles if s != "enunciated")
+        out["claims"].append({"claim": "'enunciated': speaking very slowly (under 0.75x default, and the slowest style)",
+                              "verdict": "supported" if ratio < 0.75 and slowest else "NOT supported",
+                              "evidence": f"pace {e['chars_per_active_s']} vs {dd['chars_per_active_s']} characters per active second "
+                                          f"({ratio:.2f}x); other styles " + ", ".join(f"{s} {out['per_style'][s]['chars_per_active_s']}"
+                                                                                      for s in styles if s not in ("enunciated", "default"))})
+        if "sad" in styles and None not in (e["f0_median_hz"], dd["f0_median_hz"], out["per_style"]["sad"]["f0_median_hz"]):
+            sad_f0 = out["per_style"]["sad"]["f0_median_hz"]
+            lo, hi = sorted((sad_f0, dd["f0_median_hz"]))
+            out["claims"].append({"claim": "'enunciated': with a moderate pitch (between sad's low pitch and default's)",
+                                  "verdict": "supported" if lo <= e["f0_median_hz"] <= hi else "NOT supported",
+                                  "evidence": f"F0 median {e['f0_median_hz']} Hz; sad {sad_f0}, default {dd['f0_median_hz']}"})
+        out["claims"].append({"claim": "'enunciated': careful, clearly enunciated", "verdict": "label only",
+                              "evidence": "perceptual; Expresso's own style name for these recordings"})
     out["claims"].append({"claim": "'conversational' (if present in the style phrase)", "verdict": "NOT verifiable",
                           "evidence": "the clips are read-aloud sentences, not conversation; no measurement can support the word"})
     return out
