@@ -20,7 +20,7 @@ import numpy as np
 import soundfile as sf
 import torch
 from _common import model_dir, pick_device  # before transformers: loads .env (HF_HOME)
-from expresso_common import Config, audio_problem, read_json, speaking_pace
+from expresso_common import TOO_LONG, Config, audio_problem, read_json, speaking_pace, strip_emphasis_markers
 from parler_tts import ParlerTTSForConditionalGeneration
 from transformers import AutoTokenizer
 from transformers.cache_utils import StaticCache
@@ -99,10 +99,15 @@ class StyledVoice:
                 f"use only, and a synthetic voice of a real person; do not present it as real.")
 
     def synth(self, text, style):
+        # Cap the length at what audio_problem would reject as too long anyway (at least 3 s): on very short text ("Hi")
+        # the model sometimes never stops and babbles to the 30 s limit, which takes minutes per try on a Mac.
+        expected = len(strip_emphasis_markers(text)) / self.pace[style]
+        frames = int(self.model.config.audio_encoder.frame_rate * max(3.0, TOO_LONG * expected + 1.5))
+        kwargs = self.gen_kwargs | {"max_length": min(self.gen_kwargs["max_length"], frames + 10)}   # +10: codebook delays
         desc = self.tokenizer(self.descriptions[style], return_tensors="pt").to(self.device)
         prompt = self.tokenizer(text, return_tensors="pt").to(self.device)
         out = self.model.generate(input_ids=desc.input_ids, attention_mask=desc.attention_mask,
-                                  prompt_input_ids=prompt.input_ids, prompt_attention_mask=prompt.attention_mask, **self.gen_kwargs)
+                                  prompt_input_ids=prompt.input_ids, prompt_attention_mask=prompt.attention_mask, **kwargs)
         return out.cpu().float().numpy().squeeze()
 
     def problem_with(self, path, text, style, check):
