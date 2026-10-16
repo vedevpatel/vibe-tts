@@ -32,6 +32,9 @@ scripts/run.sh --style sad "Say this."  # the Expresso emotion fine-tune: defaul
 scripts/run.sh --style whisper --check "Say this."  # also check each clip with Whisper ASR and regenerate garbled ones
 ```
 
+Or use the local page: `.venv/bin/python scripts/serve.py` loads the fine-tune once and opens http://127.0.0.1:8765/
+(this machine only), where you type text, pick a style and hear it. Clips are kept in `outputs/page/`.
+
 Audio is written to `outputs/`. Per-machine settings (model location, output location, device)
 go in an optional, gitignored `.env`; copy `.env.example`.
 
