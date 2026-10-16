@@ -1,10 +1,11 @@
 """Synthesize sentences with the local parler-tts-mini-v1 weights (see scripts/download_models.py).
 
-Usage: .venv/bin/python scripts/speak.py [--compile] [--style default|sad|whisper] ["sentence one" "sentence two" ...]
+Usage: .venv/bin/python scripts/speak.py [--compile] [--style default|sad|whisper [--check]] ["sentence one" "sentence two" ...]
 Writes speak_<n>.wav to the output dir (VIBE_TTS_OUTPUT_DIR, default outputs/). With no sentences, runs a few built-in test sentences.
 
 --style speaks with the Expresso emotion fine-tune instead (one speaker's voice; default, sad or whisper; noncommercial,
-see EXPRESSO.md), using the descriptions and generation settings it was evaluated with.
+see EXPRESSO.md), using the descriptions and generation settings it was evaluated with. A clip that is cut off or far
+too short or long is generated again; --check also transcribes each clip with Whisper and regenerates garbled ones.
 
 --compile (CUDA only) compiles the forward pass with a static cache. It costs ~30s of
 warm-up per process and pads every input to a fixed length, but runs near real time on
@@ -40,8 +41,12 @@ parser.add_argument("--compile", action="store_true", help="torch.compile with a
 parser.add_argument("--style", help="speak with the Expresso emotion fine-tune in this style (default, sad or whisper): Expresso "
                     "speaker ex02's voice, noncommercial use only, see EXPRESSO.md. Which checkpoint: [speak] in "
                     "configs/expresso_emotion.toml")
+parser.add_argument("--check", action="store_true", help="with --style: also transcribe each clip with Whisper and generate it "
+                    "again if words are missing or garbled (auto_evaluate.py completeness's rule; a few seconds per clip)")
 args = parser.parse_args()
 sentences = args.sentences or DEFAULT_SENTENCES
+if args.check and not args.style:
+    raise SystemExit("--check only applies with --style")
 
 RETRIES = 2   # --style only: extra tries for a clip that audio_problem() flags
 model_path, description, gen_kwargs = MODEL_DIR, DESCRIPTION, {}
@@ -62,6 +67,10 @@ if args.style:
     g = cfg["eval"]["generation"]
     gen_kwargs = {k: g[k] for k in ("do_sample", "temperature", "max_length", "min_new_tokens")}
     pace = speaking_pace(cfg)
+    if args.check:
+        from auto_evaluate import Measures, completeness_flags
+
+        measures = Measures(cfg)   # Whisper loads on the first clip
     print(f"style={args.style}: {cfg['speak']['run']} fine-tune, Expresso speaker {info['speaker']}. Trained on CC BY-NC 4.0 "
           f"data: noncommercial use only, and a synthetic voice of a real person; do not present it as real.")
 
@@ -109,17 +118,38 @@ if compiled:
         synth("This is for compilation")
     print(f"warm-up: {time.time() - start:.1f}s")
 
+
+def problem_with(path, text):
+    """(severity, why) for a --style clip: 0 = fine, 1 = complete but worth a listen (garbled, or far too long),
+    2 = incomplete (cut off, too short, last words missing). Without --check: the audio-only checks. With --check: those
+    plus Whisper's transcript, exactly as auto_evaluate.py completeness flags clips."""
+    if not args.check:
+        problem = audio_problem(path, text, args.style, pace)
+        return (0, None) if not problem else (1 if problem[0] == "too_long" else 2, problem[1])
+    heard = measures.transcript(path)
+    flag, detail = completeness_flags(measures.normalize_text(text), measures.normalize_text(heard), path, text, args.style, pace)
+    return {None: 0, "check": 1, "incomplete": 2}[flag], flag and f"{detail} (heard {heard!r})"
+
+
 OUT_DIR.mkdir(exist_ok=True)
 for i, text in enumerate(sentences):
     path = OUT_DIR / f"speak_{i}.wav"
     # With --style, a clip that is cut off, far too short or far too long for its text is generated again (sampling makes
     # each try different). The fine-tune does this about 1 time in 100 (EXPRESSO.md); the checks need no transcript.
+    # --check adds Whisper's transcript, for garbled or missing words (most of all in long whispers). If every try has a
+    # problem, the least bad one is kept (complete but garbled over incomplete; the earliest on a tie).
+    best = None
     for attempt in range(1 + (RETRIES if args.style else 0)):
         start = time.time()
         audio = synth(text)
         sf.write(path, audio, model.config.sampling_rate)
-        problem = audio_problem(path, text, args.style, pace) if args.style else None
+        severity, problem = problem_with(path, text) if args.style else (0, None)
+        if best is None or severity < best[0]:
+            best = (severity, attempt, audio)
         if not problem:
             break
-        print(f"{path.name}: {problem[1]}; " + ("generating again" if attempt < RETRIES else f"kept after {RETRIES} retries"))
+        print(f"{path.name}: {problem}; " + ("generating again" if attempt < RETRIES else f"kept try {best[1] + 1} of {1 + RETRIES}"))
+    if best[2] is not audio:
+        audio = best[2]
+        sf.write(path, audio, model.config.sampling_rate)
     print(f"{path.name}: {len(audio) / model.config.sampling_rate:.2f}s audio in {time.time() - start:.1f}s  <- {text!r}")
