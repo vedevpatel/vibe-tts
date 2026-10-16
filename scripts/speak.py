@@ -1,9 +1,9 @@
 """Synthesize sentences with the local parler-tts-mini-v1 weights (see scripts/download_models.py).
 
-Usage: .venv/bin/python scripts/speak.py [--compile] [--style default|sad|whisper [--check]] ["sentence one" "sentence two" ...]
+Usage: .venv/bin/python scripts/speak.py [--compile] [--style default|sad|whisper|enunciated [--check]] ["sentence one" "sentence two" ...]
 Writes speak_<n>.wav to the output dir (VIBE_TTS_OUTPUT_DIR, default outputs/). With no sentences, runs a few built-in test sentences.
 
---style speaks with the Expresso emotion fine-tune instead (one speaker's voice; default, sad or whisper; noncommercial,
+--style speaks with the Expresso emotion fine-tune instead (one speaker's voice; default, sad, whisper or enunciated; noncommercial,
 see EXPRESSO.md), using the descriptions and generation settings it was evaluated with. A clip that is cut off or far
 too short or long is generated again; --check also transcribes each clip with Whisper and regenerates garbled ones.
 Whisper text is spoken in pieces of at most 14 words joined with pauses (long whispers otherwise often stop early).
@@ -40,7 +40,7 @@ DEFAULT_SENTENCES = [
 parser = argparse.ArgumentParser()
 parser.add_argument("sentences", nargs="*")
 parser.add_argument("--compile", action="store_true", help="torch.compile with a static cache (CUDA only)")
-parser.add_argument("--style", help="speak with the Expresso emotion fine-tune in this style (default, sad or whisper): Expresso "
+parser.add_argument("--style", help="speak with the Expresso emotion fine-tune in this style (default, sad, whisper or enunciated): Expresso "
                     "speaker ex02's voice, noncommercial use only, see EXPRESSO.md. Which checkpoint: [speak] in "
                     "configs/expresso_emotion.toml")
 parser.add_argument("--check", action="store_true", help="with --style: also transcribe each clip with Whisper and generate it "
