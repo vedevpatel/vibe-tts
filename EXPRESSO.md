@@ -443,7 +443,27 @@ and the three other speakers). Full output: [`results/auto_score_emotion-v3.md`]
 - **Early stops**: none in 56 default and sad clips. In whisper, 3 of 28 clips were flagged by the transcript check
   (garbled words, or the last words not heard); a listener confirmed those three sound wonky and found the rest of the
   whispers good (4 sentences heard next to the real recordings). The audio-only checks that `run.sh --style` retries on
-  do not catch these, so expect roughly 1 whispered clip in 10 to need regenerating by hand.
+  do not catch these; the robustness batch below shows that they depend on sentence length.
+
+### Robustness batch (v3)
+The 60 `[robustness]` sentences (20 short, 20 medium, 20 long of 23-31 words) in every style, seed 11, judged by the same
+rule ([`results/completeness_emotion-v3-robustness.md`](results/completeness_emotion-v3-robustness.md)). Cells:
+incomplete / complete but flagged to check (garbled).
+
+| style | short | medium | long | incomplete overall |
+|---|---|---|---|---|
+| default | 0 / 1 | 0 / 0 | 0 / 0 | 0/60 (95% CI 0-6%) |
+| sad | 0 / 2 | 0 / 0 | 0 / 0 | 0/60 (0-6%) |
+| **whisper** | 0 / 0 | 0 / 2 | **8 / 4** | **8/60 (7-24%)** |
+
+- **Default and sad are as robust as in v2** (0 of 120 incomplete, as v2's batch). The 3 short clips flagged for a word
+  ("Come here, fleece") were clean when generated again.
+- **Whisper fails on long sentences**: 12 of 20 long whispers stop early (8) or garble words (4), against 2 of 20 medium
+  and none of the short ones. Every style was trained on equally short sentences (median 7 words, at most 25), so length
+  alone does not explain it. A likely reason, not tested: the unchanged model cannot whisper, so whisper rests on about
+  300 short clips, while default and sad build on the base model's own long-sentence ability.
+- **The audio-only checks catch none of the 17 flagged clips**: they end in silence at a plausible length. Whisper's
+  transcript is needed, hence `--check` below.
 
 ### Everyday use
 `scripts/run.sh --style default|sad|whisper "Text."` speaks with the checkpoint named in `[speak]` of the config (emotion-v3; v2 before),
@@ -457,6 +477,14 @@ generated again, up to twice, and the reason is printed. These are the audio-onl
 they catch all five problem clips above (both cut-offs and the three padded short ones). In a first try, 1 of 8 short
 clips was regenerated (it ended in a burst 15 dB louder than its speech) and the second attempt was clean. A wrong
 word in the middle of a clip is not caught: that would need Whisper.
+
+`--check` (with `--style`) adds Whisper: each clip is transcribed and generated again if it fails `completeness`'s rule
+(last words missing, or 25%+ of the words wrong). If all three tries fail, the least bad is kept (complete but garbled
+over incomplete). Tested on the 17 sentences the robustness batch flagged, generated again with `--check`: the 2 medium
+whispers and the 3 default and sad clips were clean on the first try; of the 12 long whispers, 9 ended clean (3 at once,
+4 after one retry, 2 after two) and 3 still failed after two retries (9 of 26 tries clean, 35%). Cost: a few seconds of
+Whisper per clip, plus about a minute per retry of a long whisper. The rule flags 9 of 228 real recordings for Whisper's
+spelling ("straight jacket"), so it occasionally regenerates a good clip too. For whispers, shorter sentences are safer.
 
 ### Listen
 Two blinded pages are ready (open `index.html` in a browser; ratings save automatically in that browser and export as JSON):
@@ -474,13 +502,15 @@ answer keys are `outputs/expresso/listening/set-{a,b}.answer_key.json`; do not o
 ```
 
 ### Next steps
-1. Catch wonky whispers automatically: an optional transcript check (Whisper ASR) in `run.sh --style`'s retry, since the
-   audio-only checks miss the roughly 1 in 10 whispered clips that sound wrong.
+1. Long whispers: about 1 in 4 still fails after `--check`'s two retries. Options: split long whisper text at sentence
+   or clause boundaries and join the clips (short and medium whispers are reliable), or retrain with longer whispered
+   training examples made by joining consecutive clips.
 2. More styles on the same recipe, each with `--extend`, a new run, automatic scoring and a short listen. Measured on 60
    real clips per style, how far each is from ex02's default (best single measure, AUC): whisper 1.00 (voicing), enunciated
    0.97 and confused 0.94 (pace), laughing 0.87-0.91 (arousal, valence), happy only 0.69 (arousal; her default already
    sounds upbeat), so happy is the hardest to learn and to confirm.
-3. Optional: a second listener, absolute naturalness ratings, a robustness batch for v3.
+3. Optional: a second listener, absolute naturalness ratings, a listen to the 17 clips the v3 batch flagged (does each
+   really sound wrong?).
 
 ### Artifacts
 | what | where | notes |
