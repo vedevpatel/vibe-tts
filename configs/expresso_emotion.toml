@@ -144,8 +144,8 @@ new_sentences = [
 [speak]
 # The fine-tune that `scripts/run.sh --style <style>` speaks with: a run under <data root>/runs with an export/.
 # Its styles and descriptions come from that export (export_info.json), not from [description] above.
-# emotion-v3: default, sad, whisper (emotion-v2, default and sad only, remains available by naming it here).
-run = "emotion-v3"
+# emotion-v4: default, sad, whisper, enunciated (emotion-v3 without enunciated, and emotion-v2, default and sad only, remains available by naming it here).
+run = "emotion-v4"
 
 [robustness]
 # A larger batch of new sentences (checked at run time to be absent from the release) for measuring how often a model
