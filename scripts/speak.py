@@ -6,6 +6,7 @@ Writes speak_<n>.wav to the output dir (VIBE_TTS_OUTPUT_DIR, default outputs/). 
 --style speaks with the Expresso emotion fine-tune instead (one speaker's voice; default, sad or whisper; noncommercial,
 see EXPRESSO.md), using the descriptions and generation settings it was evaluated with. A clip that is cut off or far
 too short or long is generated again; --check also transcribes each clip with Whisper and regenerates garbled ones.
+Whisper text is spoken in pieces of at most 14 words joined with pauses (long whispers otherwise often stop early).
 
 --compile (CUDA only) compiles the forward pass with a static cache. It costs ~30s of
 warm-up per process and pads every input to a fixed length, but runs near real time on
@@ -14,6 +15,7 @@ an L4 once warm. Worth it for many sentences in one run; not for a single one.
 import argparse
 import time
 
+import numpy as np
 import soundfile as sf
 import torch
 from _common import model_dir, output_dir, pick_device  # before transformers: loads .env (HF_HOME)
@@ -49,6 +51,10 @@ if args.check and not args.style:
     raise SystemExit("--check only applies with --style")
 
 RETRIES = 2   # --style only: extra tries for a clip that audio_problem() flags
+# Whispers of over ~14 words often stop early or garble (12 of 20 long ones, 2 of 20 medium, 0 of 20 short; EXPRESSO.md),
+# so whisper text is spoken in pieces of at most this many words, cut at sentence ends and commas, joined with pauses.
+SPLIT_STYLES, MAX_WORDS = {"whisper"}, 14
+PAUSE_S = {",": 0.25, ";": 0.3, ":": 0.3, ".": 0.45, "!": 0.45, "?": 0.45}   # after a piece ending in this mark
 model_path, description, gen_kwargs = MODEL_DIR, DESCRIPTION, {}
 if args.style:
     from expresso_common import Config, audio_problem, read_json, speaking_pace
@@ -131,16 +137,57 @@ def problem_with(path, text):
     return {None: 0, "check": 1, "incomplete": 2}[flag], flag and f"{detail} (heard {heard!r})"
 
 
-OUT_DIR.mkdir(exist_ok=True)
-for i, text in enumerate(sentences):
-    path = OUT_DIR / f"speak_{i}.wav"
+BREAK_BEFORE = {"and", "but", "or", "so", "because", "until", "before", "after", "while", "when", "where", "who", "which",
+                "that", "if", "though", "although", "unless", "since", "with", "without", "to", "from", "into", "at", "on", "in"}
+
+
+def bisect_words(words):
+    """Halve a clause with no punctuation until every part fits: before a conjunction or preposition nearest the middle
+    (at least 3 words on each side), else at the middle."""
+    if len(words) <= MAX_WORDS:
+        return [words]
+    mid = len(words) // 2
+    cuts = [k for k in range(3, len(words) - 2) if words[k].lower() in BREAK_BEFORE]
+    k = min(cuts, key=lambda c: abs(c - mid)) if cuts else mid
+    return bisect_words(words[:k]) + bisect_words(words[k:])
+
+
+def pieces(text):
+    """Split text into pieces of at most MAX_WORDS words: at sentence ends, then at commas/semicolons/colons (adjacent
+    clauses merged while they fit), and an over-long clause with bisect_words."""
+    import re
+
+    out = []
+    for sentence in re.split(r"(?<=[.!?])\s+", text.strip()):
+        clauses = re.split(r"(?<=[,;:])\s+", sentence)
+        cur = []
+        for clause in clauses:
+            words = clause.split()
+            if len(words) > MAX_WORDS:
+                if len(cur) <= 2:   # a lone "So," or "Well," stays with what follows
+                    words, cur = cur + words, []
+                if cur:
+                    out.append(" ".join(cur))
+                    cur = []
+                out += [" ".join(p) for p in bisect_words(words)]
+            elif len(cur) + len(words) > MAX_WORDS:
+                out.append(" ".join(cur))
+                cur = words
+            else:
+                cur += words
+        if cur:
+            out.append(" ".join(cur))
+    return out
+
+
+def generate(text, path):
+    """One clip for text, written to path and returned. With --style, regenerated on a problem as below."""
     # With --style, a clip that is cut off, far too short or far too long for its text is generated again (sampling makes
     # each try different). The fine-tune does this about 1 time in 100 (EXPRESSO.md); the checks need no transcript.
     # --check adds Whisper's transcript, for garbled or missing words (most of all in long whispers). If every try has a
     # problem, the least bad one is kept (complete but garbled over incomplete; the earliest on a tie).
     best = None
     for attempt in range(1 + (RETRIES if args.style else 0)):
-        start = time.time()
         audio = synth(text)
         sf.write(path, audio, model.config.sampling_rate)
         severity, problem = problem_with(path, text) if args.style else (0, None)
@@ -150,6 +197,23 @@ for i, text in enumerate(sentences):
             break
         print(f"{path.name}: {problem}; " + ("generating again" if attempt < RETRIES else f"kept try {best[1] + 1} of {1 + RETRIES}"))
     if best[2] is not audio:
-        audio = best[2]
-        sf.write(path, audio, model.config.sampling_rate)
-    print(f"{path.name}: {len(audio) / model.config.sampling_rate:.2f}s audio in {time.time() - start:.1f}s  <- {text!r}")
+        sf.write(path, best[2], model.config.sampling_rate)
+    return best[2]
+
+
+OUT_DIR.mkdir(exist_ok=True)
+sr = model.config.sampling_rate
+for i, full_text in enumerate(sentences):
+    path = OUT_DIR / f"speak_{i}.wav"
+    parts = pieces(full_text) if args.style in SPLIT_STYLES else [full_text]
+    if len(parts) > 1:
+        print(f"{path.name}: spoken in {len(parts)} pieces: " + " | ".join(parts))
+    start_all, joined = time.time(), []
+    for n, text in enumerate(parts):
+        audio = generate(text, path)
+        joined.append(audio)
+        if n < len(parts) - 1:
+            joined.append(np.zeros(int(PAUSE_S.get(text[-1], 0.15) * sr), dtype=audio.dtype))
+    audio = np.concatenate(joined)
+    sf.write(path, audio, sr)
+    print(f"{path.name}: {len(audio) / sr:.2f}s audio in {time.time() - start_all:.1f}s  <- {full_text!r}")
