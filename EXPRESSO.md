@@ -484,7 +484,21 @@ over incomplete). Tested on the 17 sentences the robustness batch flagged, gener
 whispers and the 3 default and sad clips were clean on the first try; of the 12 long whispers, 9 ended clean (3 at once,
 4 after one retry, 2 after two) and 3 still failed after two retries (9 of 26 tries clean, 35%). Cost: a few seconds of
 Whisper per clip, plus about a minute per retry of a long whisper. The rule flags 9 of 228 real recordings for Whisper's
-spelling ("straight jacket"), so it occasionally regenerates a good clip too. For whispers, shorter sentences are safer.
+spelling ("straight jacket"), so it occasionally regenerates a good clip too.
+
+Whisper text is spoken in pieces of at most 14 words (`speak.py`'s `pieces`: cut at sentence ends, then commas, then
+before a conjunction or preposition), each generated and checked on its own and joined with short pauses (0.25 s after a
+comma, 0.45 s after a sentence). Default and sad are spoken whole. On the 20 long robustness sentences, the joined clips
+judged against the full text by the same rule:
+
+| long whispers (20) | flagged |
+|---|---|
+| whole (the batch above) | 12 |
+| in pieces | 1 (the last 2 words missing) |
+| in pieces, with `--check` | 0 (11 retries over about 57 pieces; every piece ended clean) |
+
+About a minute per long whisper on MPS when no piece needs a retry. Nobody has listened yet to whether the joins sound
+natural.
 
 ### Listen
 Two blinded pages are ready (open `index.html` in a browser; ratings save automatically in that browser and export as JSON):
@@ -502,9 +516,7 @@ answer keys are `outputs/expresso/listening/set-{a,b}.answer_key.json`; do not o
 ```
 
 ### Next steps
-1. Long whispers: about 1 in 4 still fails after `--check`'s two retries. Options: split long whisper text at sentence
-   or clause boundaries and join the clips (short and medium whispers are reliable), or retrain with longer whispered
-   training examples made by joining consecutive clips.
+1. Listen to a few long whispers spoken in pieces: do the joins and pauses sound natural?
 2. More styles on the same recipe, each with `--extend`, a new run, automatic scoring and a short listen. Measured on 60
    real clips per style, how far each is from ex02's default (best single measure, AUC): whisper 1.00 (voicing), enunciated
    0.97 and confused 0.94 (pace), laughing 0.87-0.91 (arousal, valence), happy only 0.69 (arousal; her default already
