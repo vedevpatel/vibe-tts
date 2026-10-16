@@ -29,6 +29,7 @@ pinned dependencies for your platform, checks out the pinned `parler-tts` source
 scripts/run.sh                          # built-in test sentences, then play them
 scripts/run.sh "Say this." "And this."  # your own text (NOPLAY=1 to skip playback)
 scripts/run.sh --style sad "Say this."  # the Expresso emotion fine-tune: default, sad or whisper (noncommercial, see below)
+scripts/run.sh --style whisper --check "Say this."  # also check each clip with Whisper ASR and regenerate garbled ones
 ```
 
 Audio is written to `outputs/`. Per-machine settings (model location, output location, device)
