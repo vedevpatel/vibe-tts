@@ -11,7 +11,9 @@ automatic measure, and **by ear**: in a blinded "which one sounds sadder?" check
 13 of 14 same-sentence pairs (0 the default, 1 "cannot tell"; p = 0.001 against guessing) and the real sad recording in
 8 of 8. One listener and 14 pairs: a clear result, not a large study. See [Results](#results). **emotion-v3** adds whisper to the same
 speaker: it whispers like the real recordings by every automatic measure, sad and default stay as good as in v2, and a
-listener found the whispers good, apart from the clips the automatic check had flagged. `run.sh --style` uses v3.
+listener found the whispers good, apart from the clips the automatic check had flagged. **emotion-v4** adds enunciated
+(careful, very slow speech): it matches the real recordings' pace (13.6 vs 13.2 characters per second, default 20.6),
+the other three styles hold up, and a listener found it really good. `run.sh --style` uses v4.
 
 ## License: CC BY-NC 4.0, noncommercial
 
@@ -53,7 +55,7 @@ scripts/setup_train.sh                                 # isolated training env (
 .venv/bin/python scripts/inventory_expresso.py         # inventory, speaker choice, acoustic checks, listening pack
 .venv/bin/python scripts/prepare_expresso.py           # resample, gate, descriptions, grouped splits, verification
 .venv/bin/python scripts/evaluate_emotion.py select    # freeze the evaluation set
-#   adding a style later (emotion-v3: whisper): list it in [speaker] styles, then
+#   adding a style later (emotion-v3: whisper, emotion-v4: enunciated): list it in [speaker] styles, then
 #   prepare_expresso.py --extend and evaluate_emotion.py select --extend (existing data, splits and eval items unchanged)
 scripts/run_colab_train.sh                             # Colab GPU: baseline generation, fine-tune, fine-tuned generation
 #   (--smoke checks the whole pipeline in a few minutes first; --keep-vm-on-failure keeps the VM if a late step fails)
@@ -67,7 +69,7 @@ scripts/run_colab_train.sh                             # Colab GPU: baseline gen
 .venv/bin/python scripts/evaluate_emotion.py generate --set robustness --label robustness-<run> --model <checkpoint dir>
 .venv/bin/python scripts/auto_evaluate.py completeness --runs robustness-<run>       # early stops, babbling: flags clips to hear
 
-scripts/run.sh --style default|sad "Text."             # everyday use of the fine-tune ([speak] run in the config)
+scripts/run.sh --style default|sad|whisper|enunciated [--check] "Text."  # everyday use of the fine-tune ([speak] run in the config)
 .venv/bin/python scripts/evaluate_emotion.py page --runs baseline finetuned --name set-a
 #   listen in the browser, export ratings, then:
 .venv/bin/python scripts/evaluate_emotion.py score --key <key.json> --ratings <ratings.json>
@@ -118,8 +120,17 @@ emotion-v2 (current config):
 - default: *"Expresso speaker ex02 delivers an expressive and animated speech with a moderate speed and pitch. The recording is clear with little background noise."*
 - sad: *"Expresso speaker ex02 delivers a sad, monotone speech, speaking slowly with a low pitch. The recording is clear with little background noise."*
 
-emotion-v3 (current config) keeps both texts exactly and adds:
+emotion-v3 keeps both texts exactly and adds:
 - whisper: *"Expresso speaker ex02 whispers in a soft, breathy voice with no pitch, at a moderate speed. The recording is fairly clear, with some background noise."*
+
+emotion-v4 (current config) keeps all three and adds:
+- enunciated: *"Expresso speaker ex02 delivers a careful, clearly enunciated speech, speaking very slowly with a moderate pitch. The recording is clear with little background noise."*
+
+Enunciated claims, from `prepare_expresso.py --extend` (379 of 380 clips accepted, 1 too short): pace 12.6 vs 19.6
+characters per active second for default (0.64x) and the slowest style (sad 16.4, whisper 19.3): very slowly; F0 median
+232 Hz between sad's 223 and default's 248: moderate pitch; noise floor median -63.1 dBFS, 95th percentile -58.8: the
+shared recording sentence holds; "careful, clearly enunciated" is perceptual (Expresso's own style name) and not measured.
+Split 303 / 38 / 38; the 1129 earlier manifest rows and every earlier split row are unchanged (compared with a backup).
 
 Why v2: the unchanged model did not respond to "sad" at all (set-b), while "expressive and animated", "monotone", speed
 and pitch are the attribute words Parler-TTS Mini was trained on. Every v2 claim holds for ex02, sad relative to default
@@ -445,6 +456,43 @@ and the three other speakers). Full output: [`results/auto_score_emotion-v3.md`]
   whispers good (4 sentences heard next to the real recordings). The audio-only checks that `run.sh --style` retries on
   do not catch these; the robustness batch below shows that they depend on sentence length.
 
+### emotion-v4: adding enunciated (automatic measures and a listen)
+The same recipe as v3, run `runs/emotion-v4` (same seed and settings, 1204 training clips). Validation loss was lowest at
+step 450 (epoch 6; v1-v3 chose epoch 4 of smaller data), the exported checkpoint. Calibration first, with enunciated as a
+fourth class: 100% of held-out real clips classified correctly, P(enunciated) separates real enunciated from default
+perfectly ([`results/auto_calibration.md`](results/auto_calibration.md)). Full output:
+[`results/auto_score_emotion-v4.md`](results/auto_score_emotion-v4.md), [`results/completeness_emotion-v4.md`](results/completeness_emotion-v4.md).
+
+| 28 clips per style | classified as intended | pace (chars / active s) | pairs: higher P(style) than default | WER | speaker similarity |
+|---|---|---|---|---|---|
+| **v4 enunciated** | **75%** (11% default, 14% sad) | **13.6** | **100%** | 1.0% | 0.95 |
+| real enunciated (8 clips) | 100% | 13.2 | 100% | 1.9% | 0.95 |
+| unchanged model, same description | 0% | | 54% | 4.8% | 0.63 |
+| v4 default | 100% | 20.6 | | 1.0% | 0.94 |
+| v4 sad (v3) | 100% (93%) | | 100% (100%) | 2.9% (1.4%) | 0.90 (0.93) |
+| v4 whisper (v3) | 100% (96%) | | 100% (96%) | 13.0% (4.8%) | 0.87 (0.84) |
+
+- **Enunciated is learned**: as slow as the real recordings and told apart from default in every pair. The unchanged
+  model does not slow down for the description at all. It is less distinct than whisper: a quarter of the clips are
+  classified as default or sad.
+- **Default, sad and whisper hold up.** Whisper's higher WER comes from two garbled clips ("put it in the coat. Put it in
+  the coat."); 4 of 28 whispers were flagged against 3 of 28 for v3. No early stops in 112 clips.
+- **Listening**: a listener heard enunciated and default versions of the same sentences and found enunciated really good.
+
+Robustness batch for v4, the 60 `[robustness]` sentences spoken whole in every style
+([`results/completeness_emotion-v4-robustness.md`](results/completeness_emotion-v4-robustness.md)); cells incomplete / to check:
+
+| style | short | medium | long | v3 long |
+|---|---|---|---|---|
+| default | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 |
+| sad | 0 / 2 | 0 / 0 | 0 / 0 | 0 / 0 |
+| whisper | 0 / 1 | 0 / 2 | **3 / 1** | 8 / 4 |
+| enunciated | 0 / 0 | 0 / 0 | 0 / 0 | |
+
+Enunciated is as robust as default (0 of 60 flagged, even though its long sentences run 15-20 s). Long whispers spoken
+whole improved from 12 of 20 flagged (v3) to 4 of 20; why is not tested (one seed, and v4 trained two epochs longer on
+more data). `run.sh --style whisper` still speaks long text in pieces, which flagged 0 of 20 with `--check` on v3.
+
 ### Robustness batch (v3)
 The 60 `[robustness]` sentences (20 short, 20 medium, 20 long of 23-31 words) in every style, seed 11, judged by the same
 rule ([`results/completeness_emotion-v3-robustness.md`](results/completeness_emotion-v3-robustness.md)). Cells:
@@ -466,7 +514,7 @@ incomplete / complete but flagged to check (garbled).
   transcript is needed, hence `--check` below.
 
 ### Everyday use
-`scripts/run.sh --style default|sad|whisper "Text."` speaks with the checkpoint named in `[speak]` of the config (emotion-v3; v2 before),
+`scripts/run.sh --style default|sad|whisper|enunciated "Text."` speaks with the checkpoint named in `[speak]` of the config (emotion-v4; v3 and v2 before),
 using the descriptions stored with that checkpoint (`export_info.json`) and the evaluated generation settings. A check of
 3 new sentences per style gave P(sad) 0.00-0.06 for default and 0.94-1.00 for sad, lower arousal for sad in all 3 pairs,
 speaker similarity 0.87-0.97 and exact transcripts. Without `--style`, `run.sh` is unchanged.
@@ -517,18 +565,19 @@ answer keys are `outputs/expresso/listening/set-{a,b}.answer_key.json`; do not o
 
 ### Next steps
 1. More styles on the same recipe, each with `--extend`, a new run, automatic scoring and a short listen. Measured on 60
-   real clips per style, how far each is from ex02's default (best single measure, AUC): whisper 1.00 (voicing), enunciated
-   0.97 and confused 0.94 (pace), laughing 0.87-0.91 (arousal, valence), happy only 0.69 (arousal; her default already
-   sounds upbeat), so happy is the hardest to learn and to confirm.
+   real clips per style, how far each is from ex02's default (best single measure, AUC): confused 0.94 (pace), laughing
+   0.87-0.91 (arousal, valence), happy only 0.69 (arousal; her default already sounds upbeat), so happy is the hardest to
+   learn and to confirm. Whisper (1.00) and enunciated (0.97) are done.
 2. Optional: a second listener, absolute naturalness ratings, a listen to the 17 clips the v3 batch flagged (does each
    really sound wrong?).
 
 ### Artifacts
 | what | where | notes |
 |---|---|---|
-| fine-tuned checkpoint (step 148) | `data/expresso/runs/emotion-v1/export/` | sha256 verified; carries `NONCOMMERCIAL_NOTICE.md`; **not published** |
-| emotion-v2 checkpoint (step 148) | `data/expresso/runs/emotion-v2/export/` | same; v2 descriptions |
-| emotion-v3 checkpoint (step 224) | `data/expresso/runs/emotion-v3/export/` | same; default, sad, whisper; used by `run.sh --style` |
+| emotion-v1 checkpoint (step 148) | `data/expresso/runs/emotion-v1/export/` | weights deleted 2026-10-16 to free 3.3 GB (sha256 in `export_info.json`; retrain with the same seed); records kept |
+| emotion-v2 checkpoint (step 148) | `data/expresso/runs/emotion-v2/export/` | sha256 verified; carries `NONCOMMERCIAL_NOTICE.md`; **not published**; v2 descriptions |
+| emotion-v3 checkpoint (step 224) | `data/expresso/runs/emotion-v3/export/` | same; default, sad, whisper |
+| emotion-v4 checkpoint (step 450) | `data/expresso/runs/emotion-v4/export/` | same; default, sad, whisper, enunciated; used by `run.sh --style` |
 | automatic scores | `outputs/expresso/auto/` (per-clip JSON, cache), summaries in `results/auto_*.md`, `results/completeness_*.md` | |
 | robustness batch (v2) | `outputs/expresso/runs/robustness-finetuned-emotion-v2/` | 120 clips |
 | training record | `data/expresso/runs/emotion-v1/{train_config.json,environment.json,train.log}` | |
