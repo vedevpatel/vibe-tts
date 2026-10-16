@@ -54,7 +54,7 @@ extract = [
 id = "ex02"
 # A speaker is a candidate only if EVERY target style has at least this many usable clips.
 min_usable_clips_per_style = 100
-styles = ["default", "sad", "whisper"]   # original Expresso style names (directory names under read/); whisper from emotion-v3
+styles = ["default", "sad", "whisper", "enunciated"]   # original Expresso style names (directory names under read/); whisper from emotion-v3, enunciated from v4
 #   Adding a style to prepared data: prepare_expresso.py --extend (existing examples and their splits stay as they are).
 # Read-speech corpora to use. "base" = short sentences; "longform" = long recordings (excluded:
 # no sentence-level transcripts, far above the 30 s training limit).
@@ -83,12 +83,17 @@ exclude_substyles = ["emphasis", "essentials"]
 # description checks): voiced in 8% of frames against 69% for default (no pitch), speech about 2 dB softer, the same
 # pace as default, and a noise floor of about -49 dBFS against -60 (above the -55 limit for "little background noise"),
 # hence their own recording sentence.
+#
+# emotion-v4 adds enunciated, the other three unchanged. ex02's enunciated recordings (measured before --extend): pace
+# 12.6 characters per active second against 19.6 for default and 16.4 for sad (very slowly), F0 median 232 Hz between
+# sad's 223 and default's 248 (moderate pitch), noise floor -63 dBFS (the shared recording sentence holds).
 template = "Expresso speaker {speaker} {style_phrase}. {recording}"
 recording = "The recording is clear with little background noise."
 [description.style_phrase]
 default = "delivers an expressive and animated speech with a moderate speed and pitch"
 sad = "delivers a sad, monotone speech, speaking slowly with a low pitch"
 whisper = "whispers in a soft, breathy voice with no pitch, at a moderate speed"
+enunciated = "delivers a careful, clearly enunciated speech, speaking very slowly with a moderate pitch"
 [description.recording_for]      # styles whose recordings do not fit the shared sentence
 whisper = "The recording is fairly clear, with some background noise."
 
